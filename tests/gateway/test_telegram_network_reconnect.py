@@ -618,3 +618,93 @@ async def test_handle_polling_network_error_updater_stop_timeout():
     # The reconnect ladder must have advanced past the hung stop().
     assert drain_called, "_drain_polling_connections was not called after stop() timeout"
     assert start_polling_called, "start_polling was not called after stop() timeout"
+
+
+class _FakeTransport:
+    """Fallback transport stand-in that records deterministic closure."""
+
+    instances: list = []
+
+    def __init__(self):
+        self.closed = False
+        self.instances.append(self)
+
+    async def aclose(self):
+        self.closed = True
+
+
+def _make_mock_app_with_transport():
+    polling_req = MagicMock()
+    polling_req.shutdown = AsyncMock()
+    polling_req.initialize = AsyncMock()
+    polling_req._client_kwargs = {"transport": _FakeTransport()}
+
+    mock_bot = MagicMock()
+    mock_bot._request = (polling_req, MagicMock())
+
+    mock_app = MagicMock()
+    mock_app.bot = mock_bot
+    return mock_app, polling_req
+
+
+@pytest.mark.asyncio
+async def test_drain_swaps_in_fresh_transport_and_closes_old():
+    _FakeTransport.instances.clear()
+    adapter = _make_adapter()
+    adapter._polling_transport_factory = _FakeTransport
+    adapter._app, polling_req = _make_mock_app_with_transport()
+    old_transport = polling_req._client_kwargs["transport"]
+
+    await adapter._drain_polling_connections()
+
+    assert polling_req._client_kwargs["transport"] is not old_transport
+    assert old_transport.closed
+
+
+@pytest.mark.asyncio
+async def test_repeated_drains_leave_one_live_transport():
+    _FakeTransport.instances.clear()
+    adapter = _make_adapter()
+    adapter._polling_transport_factory = _FakeTransport
+    adapter._app, polling_req = _make_mock_app_with_transport()
+
+    for _ in range(25):
+        await adapter._drain_polling_connections()
+
+    live = [transport for transport in _FakeTransport.instances if not transport.closed]
+    assert live == [polling_req._client_kwargs["transport"]]
+    assert len(_FakeTransport.instances) == 26
+
+
+@pytest.mark.asyncio
+async def test_drain_without_fallback_factory_preserves_transport():
+    _FakeTransport.instances.clear()
+    adapter = _make_adapter()
+    adapter._polling_transport_factory = None
+    adapter._app, polling_req = _make_mock_app_with_transport()
+    original_transport = polling_req._client_kwargs["transport"]
+
+    await adapter._drain_polling_connections()
+
+    assert polling_req._client_kwargs["transport"] is original_transport
+    assert not original_transport.closed
+
+
+def test_default_pool_size_fits_launchd_fd_budget():
+    source = Path(tg_adapter.__file__).read_text()
+    module = ast.parse(source)
+    defaults = [
+        node.args[1].value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_env_int"
+        and len(node.args) >= 2
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "HERMES_TELEGRAM_HTTP_POOL_SIZE"
+        and isinstance(node.args[1], ast.Constant)
+    ]
+    assert defaults == [8]
+    default_pool = defaults[0]
+    assert isinstance(default_pool, int)
+    assert 2 * 3 * default_pool <= 64

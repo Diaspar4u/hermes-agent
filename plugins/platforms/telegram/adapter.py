@@ -20,7 +20,7 @@ import threading
 import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set, Any
+from typing import Callable, Dict, List, Optional, Set, Any
 
 logger = logging.getLogger(__name__)
 
@@ -704,6 +704,10 @@ class TelegramAdapter(BasePlatformAdapter):
         super().__init__(config, Platform.TELEGRAM)
         self._app: Optional[Application] = None
         self._bot: Optional[Bot] = None
+        # Mint a fresh fallback transport when reconnect drains the polling
+        # request. PTB otherwise reuses the closed transport stored in its
+        # private client kwargs and leaks sockets across reconnect storms.
+        self._polling_transport_factory: Optional[Callable[[], Any]] = None
         self._webhook_mode: bool = False
         self._mention_patterns = self._compile_mention_patterns()
         self._reply_to_mode: str = getattr(config, 'reply_to_mode', 'first') or 'first'
@@ -2118,6 +2122,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 "[%s] Polling request shutdown failed/timed out (non-fatal)",
                 self.name, exc_info=True,
             )
+        await self._swap_polling_transport(polling_req)
         try:
             await asyncio.wait_for(polling_req.initialize(), timeout=_DRAIN_TIMEOUT)
             logger.debug(
@@ -2128,6 +2133,33 @@ class TelegramAdapter(BasePlatformAdapter):
                 "[%s] Polling request re-initialize failed/timed out (non-fatal)",
                 self.name, exc_info=True,
             )
+
+    async def _swap_polling_transport(self, polling_req: Any) -> None:
+        """Replace a drained fallback transport instead of reusing it."""
+        factory = self._polling_transport_factory
+        if factory is None:
+            return
+        client_kwargs = getattr(polling_req, "_client_kwargs", None)
+        if not isinstance(client_kwargs, dict) or "transport" not in client_kwargs:
+            return
+        old_transport = client_kwargs.get("transport")
+        try:
+            new_transport = factory()
+        except Exception:
+            logger.debug(
+                "[%s] Failed to build fresh polling transport (keeping old)",
+                self.name, exc_info=True,
+            )
+            return
+        client_kwargs["transport"] = new_transport
+        if old_transport is not None and hasattr(old_transport, "aclose"):
+            try:
+                await old_transport.aclose()
+            except Exception:
+                logger.debug(
+                    "[%s] Old polling transport aclose failed (non-fatal)",
+                    self.name, exc_info=True,
+                )
 
     def _begin_polling_generation(self) -> tuple[int, asyncio.Event]:
         """Start accepting progress for a new getUpdates polling generation."""
@@ -3728,8 +3760,11 @@ class TelegramAdapter(BasePlatformAdapter):
                 except (TypeError, ValueError):
                     return default
 
+            # Bound each PTB request pool to fit comfortably inside launchd's
+            # 256-FD default even when fallback transports multiply the pools.
+            # Telegram polling and sends need only a handful of connections.
             request_kwargs = {
-                "connection_pool_size": _env_int("HERMES_TELEGRAM_HTTP_POOL_SIZE", 512),
+                "connection_pool_size": _env_int("HERMES_TELEGRAM_HTTP_POOL_SIZE", 8),
                 "pool_timeout": _env_float("HERMES_TELEGRAM_HTTP_POOL_TIMEOUT", 8.0),
                 "connect_timeout": _env_float("HERMES_TELEGRAM_HTTP_CONNECT_TIMEOUT", 10.0),
                 "read_timeout": _env_float("HERMES_TELEGRAM_HTTP_READ_TIMEOUT", 20.0),
@@ -3800,6 +3835,7 @@ class TelegramAdapter(BasePlatformAdapter):
 
             proxy_targets = ["api.telegram.org", *fallback_ips]
             proxy_url = resolve_proxy_url("TELEGRAM_PROXY", target_hosts=proxy_targets)
+            self._polling_transport_factory = None
             if fallback_ips and not proxy_url and not disable_fallback:
                 logger.info(
                     "[%s] Telegram fallback IPs active: %s",
@@ -3833,6 +3869,11 @@ class TelegramAdapter(BasePlatformAdapter):
                             fallback_ips, **_transport_kwargs
                         )
                     },
+                )
+                transport_kwargs = dict(_transport_kwargs)
+                self._polling_transport_factory = (
+                    lambda ips=tuple(fallback_ips), kwargs=transport_kwargs:
+                    TelegramFallbackTransport(list(ips), **kwargs)
                 )
             elif proxy_url:
                 logger.info("[%s] Proxy detected; passing explicitly to HTTPXRequest: %s", self.name, proxy_url)
