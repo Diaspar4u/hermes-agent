@@ -27,6 +27,7 @@ from gateway.run_busy import approval_input_words
 from gateway.run_common import _UNSET
 from gateway.run_inbound_media import rehome_inbound_media
 from gateway.run_inbound_hooks import GatewayInboundHooksMixin
+from gateway.run_telegram_topics import GatewayTelegramTopicsMixin
 from gateway.run_plugin_injection import GatewayPluginInjectionMixin
 from gateway.run_inbound_unauthorized import (
     UnauthorizedOwnerNotifier, pairing_code_reply, pairing_profile_arg, pairing_rate_limited_reply,
@@ -68,7 +69,7 @@ def strip_discord_triggering_note(event: Any, message_text: Any) -> Any:
     return message_text.removeprefix(prefix)
 
 
-class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayPluginInjectionMixin):
+class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayPluginInjectionMixin, GatewayTelegramTopicsMixin):
     """Inbound message pipeline (_handle_message, text/media preparation, durable-turn markers, plugin injection) for GatewayRunner."""
 
     async def _hm_offer_pairing_code(self, source: SessionSource) -> None:
@@ -1232,6 +1233,11 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayPluginInjectionMixin)
         # — Discord interaction passthrough builds its own MessageEvent and
         # calls handle_message directly, so a teardown on the relay's inbound
         # handler left those turns muted.
+
+        # Topic service updates carry user metadata, not agent input. Persist
+        # after authorization, then consume without starting an empty turn.
+        if await self._handle_telegram_forum_topic_name(event):
+            return None
 
         _paused_notice = self._hm_estop_gate(event, source, is_internal)
         if _paused_notice is not None:
