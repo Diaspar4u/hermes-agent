@@ -220,8 +220,8 @@ SEND_MESSAGE_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["send", "list", "react", "unreact"],
-                "description": "Action to perform. 'send' (default) sends a message. 'list' returns all available channels/contacts across connected platforms. 'react' attaches an emoji reaction to a message (platforms that support it, e.g. photon/iMessage tapbacks). 'unreact' retracts a previously-added reaction."
+                "enum": ["send", "list", "react", "unreact", "create_topic_and_start"],
+                "description": "Action to perform. 'send' (default) sends a message. 'list' returns all available channels/contacts across connected platforms. 'react' attaches an emoji reaction to a message (platforms that support it, e.g. photon/iMessage tapbacks). 'unreact' retracts a previously-added reaction. 'create_topic_and_start' creates a Telegram topic and starts an internal agent turn there."
             },
             "target": {
                 "type": "string",
@@ -229,7 +229,11 @@ SEND_MESSAGE_SCHEMA = {
             },
             "message": {
                 "type": "string",
-                "description": "The message text to send. To send an image or file, include MEDIA:<local_path> (e.g. 'MEDIA:/tmp/report.pdf') in the message — the platform will deliver it as a native media attachment."
+                "description": "The message text to send, or the kickoff prompt for action='create_topic_and_start'. To send an image or file, include MEDIA:<local_path> (e.g. 'MEDIA:/tmp/report.pdf') in the message — the platform will deliver it as a native media attachment."
+            },
+            "topic_name": {
+                "type": "string",
+                "description": "For action='create_topic_and_start': name of the Telegram topic to create."
             },
             "emoji": {
                 "type": "string",
@@ -258,6 +262,9 @@ def send_message_tool(args, **kw):
     if action == "unreact":
         return _handle_react(args, remove=True)
 
+    if action == "create_topic_and_start":
+        return _handle_create_topic_and_start(args)
+
     return _handle_send(args)
 
 
@@ -268,6 +275,129 @@ def _handle_list():
         return json.dumps({"targets": format_directory_for_display()})
     except Exception as e:
         return json.dumps(_error(f"Failed to load channel directory: {e}"))
+
+
+async def _create_topic_and_start(
+    adapter,
+    *,
+    chat_id: str,
+    topic_name: str,
+    prompt: str,
+    user_id: str | None = None,
+    profile: str | None = None,
+) -> dict:
+    """Create one Telegram topic and start an internal turn inside it."""
+    thread_id = await adapter.create_handoff_thread(chat_id, topic_name)
+    if not thread_id:
+        return {
+            "success": False,
+            "error": f"Failed to create Telegram topic '{topic_name}'",
+        }
+
+    from gateway.config import Platform
+    from gateway.delivery import looks_like_telegram_private_chat_id
+    from gateway.session import SessionSource
+    from gateway.wake import deliver_wake
+
+    is_private = looks_like_telegram_private_chat_id(chat_id)
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id=str(chat_id),
+        chat_name=topic_name,
+        chat_type="dm" if is_private else "forum",
+        user_id=str(chat_id) if is_private else (user_id or "system:kickoff"),
+        thread_id=str(thread_id),
+        profile=profile,
+    )
+    await deliver_wake(adapter, text=prompt, source=source)
+    return {
+        "success": True,
+        "platform": "telegram",
+        "chat_id": str(chat_id),
+        "thread_id": str(thread_id),
+        "topic_name": topic_name,
+        "started": True,
+    }
+
+
+def _run_gateway_coroutine(coro, loop):
+    """Run a short control coroutine on the live gateway event loop."""
+    if loop is None or loop.is_closed() or not loop.is_running():
+        coro.close()
+        raise RuntimeError("The live gateway event loop is not available")
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    try:
+        return future.result(timeout=30)
+    except Exception:
+        future.cancel()
+        raise
+
+
+def _handle_create_topic_and_start(args):
+    topic_name = str(args.get("topic_name") or "").strip()
+    prompt = str(args.get("message") or "").strip()
+    target = str(args.get("target") or "").strip()
+    if not topic_name or not prompt:
+        return tool_error(
+            "Both 'topic_name' and 'message' are required when "
+            "action='create_topic_and_start'"
+        )
+
+    from gateway.config import Platform
+    from gateway.session_context import get_session_env
+
+    if not target:
+        return tool_error("A Telegram chat target is required")
+
+    parts = target.split(":", 1)
+    platform_name = parts[0].strip().lower()
+    if platform_name != "telegram":
+        return tool_error("action='create_topic_and_start' supports Telegram only")
+    target_ref = parts[1].strip() if len(parts) > 1 else ""
+    if not target_ref:
+        return tool_error("A Telegram chat target is required")
+    prepare_send_message_platforms()
+    chat_id, thread_id, resolution_error = resolve_send_target(
+        platform_name, target_ref
+    )
+    if resolution_error:
+        return tool_error(resolution_error)
+    if thread_id:
+        return tool_error("Target the parent Telegram chat, not an existing topic")
+
+    try:
+        from gateway.run import _gateway_runner_ref
+
+        runner = _gateway_runner_ref()
+    except Exception:
+        runner = None
+    adapter = runner.adapters.get(Platform.TELEGRAM) if runner is not None else None
+    if adapter is None:
+        return tool_error(
+            "create_topic_and_start requires the live Telegram gateway adapter"
+        )
+
+    user_id = get_session_env("HERMES_SESSION_USER_ID", "") or None
+    profile = (
+        get_session_env("HERMES_SESSION_PROFILE", "")
+        or os.environ.get("HERMES_PROFILE")
+        or None
+    )
+    try:
+        result = _run_gateway_coroutine(
+            _create_topic_and_start(
+                adapter,
+                chat_id=str(chat_id),
+                topic_name=topic_name,
+                prompt=prompt,
+                user_id=user_id,
+                profile=profile,
+            ),
+            getattr(runner, "_gateway_loop", None),
+        )
+    except Exception as e:
+        return json.dumps(_error(f"Create topic and start failed: {e}"))
+    return json.dumps(result)
 
 
 def _handle_react(args, remove=False):
