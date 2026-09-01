@@ -31,7 +31,9 @@ class IterationPrep:
     request_logger: Any
 
 
-def prepare_iteration(agent: Any,*, messages: Any, api_call_count: Any) -> IterationPrep:
+def prepare_iteration(
+    agent: Any, *, messages: Any, api_call_count: Any, current_turn_user_idx: Any
+) -> IterationPrep:
     """Prepare ``messages`` for this iteration in the original order. Every mutation here is
     cache-safe by construction: steer text lands in the newest tool result, the ghost-row
     filter only drops hidden scaffold placeholders, and repair runs BEFORE the request build."""
@@ -54,7 +56,9 @@ def prepare_iteration(agent: Any,*, messages: Any, api_call_count: Any) -> Itera
     # it lands THIS iteration. Never put in a user message (breaks alternation).
     _pre_api_steer = agent._drain_pending_steer()
     if _pre_api_steer:
-        _inject_steer_into_newest_tool_result(agent, messages, _pre_api_steer)
+        _inject_steer_into_newest_tool_result(
+            agent, messages, _pre_api_steer, current_turn_user_idx
+        )
 
     # One-shot run-budget wrap-up notice at 80% of agent.run_budget_seconds, via the
     # same cache-safe channel as /steer (newest tool result); off with no budget.
@@ -130,37 +134,51 @@ def _previous_tool_round(messages: Any) -> list:
     return []
 
 
-def _inject_steer_into_newest_tool_result(agent: Any, messages: Any, steer_text: str) -> None:
-    """Append the steer marker to the newest tool message; with no tool message, put the
-    text back so the post-tool-execution drain delivers it later."""
-    for _si in range(len(messages) - 1, -1, -1):
+def _inject_steer_into_newest_tool_result(
+    agent: Any, messages: Any, steer_text: str, current_turn_user_idx: Any
+) -> None:
+    """Append a steer only to a fresh tool result after the active user boundary."""
+    search_floor = (
+        current_turn_user_idx
+        if isinstance(current_turn_user_idx, int)
+        and 0 <= current_turn_user_idx < len(messages)
+        else len(messages) - 1
+    )
+    for _si in range(len(messages) - 1, search_floor, -1):
         _sm = messages[_si]
-        if isinstance(_sm, dict) and _sm.get("role") == "tool":
-            from agent.prompt_builder import format_steer_marker
-            marker = format_steer_marker(steer_text)
-            existing = _sm.get("content", "")
-            if isinstance(existing, str):
-                _sm["content"] = existing + marker
-            else:
-                # Multimodal content blocks — append a text block.
-                with suppress(Exception):
-                    blocks = list(existing) if existing else []
-                    blocks.append({"type": "text", "text": marker})
-                    _sm["content"] = blocks
-            logger.debug(
-                "Pre-API-call steer drain: injected into tool msg at index %d", _si
-            )
-            return
+        if not isinstance(_sm, dict):
+            continue
+        role = _sm.get("role")
+        if role == "assistant":
+            break
+        if role != "tool":
+            continue
+        from agent.prompt_builder import format_steer_marker
+        marker = format_steer_marker(steer_text)
+        existing = _sm.get("content", "")
+        if isinstance(existing, str):
+            _sm["content"] = existing + marker
+        else:
+            try:
+                blocks = list(existing) if existing else []
+                blocks.append({"type": "text", "text": marker})
+                _sm["content"] = blocks
+            except Exception:
+                continue
+        logger.info(
+            "Delivered /steer before API call (%d chars, tool index %d)",
+            len(steer_text),
+            _si,
+        )
+        return
     _lock = getattr(agent, "_pending_steer_lock", None)
     if _lock is not None:
         with _lock:
-            if agent._pending_steer:
-                agent._pending_steer = agent._pending_steer + "\n" + steer_text
-            else:
-                agent._pending_steer = steer_text
+            pending = agent._pending_steer
+            agent._pending_steer = steer_text + "\n" + pending if pending else steer_text
     else:
-        existing = getattr(agent, "_pending_steer", None)
-        agent._pending_steer = (existing + "\n" + steer_text) if existing else steer_text
+        pending = getattr(agent, "_pending_steer", None)
+        agent._pending_steer = steer_text + "\n" + pending if pending else steer_text
 
 
 @dataclass
