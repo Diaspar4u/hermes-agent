@@ -111,26 +111,10 @@ def test_existing_pairing_skip_branch_enables_whatsapp(isolated_home, monkeypatc
 
     monkeypatch.setattr("builtins.input", fake_input)
     monkeypatch.setattr("hermes_cli.main._require_tty", lambda *_a, **_kw: None)
-    # Skip the bridge npm install — we're testing setup-ordering, not bridge
-    # bootstrapping.  Pretend node_modules exists (Path.exists -> True for that
-    # specific check is hard to scope, so instead pretend npm install would
-    # succeed silently if reached).
     monkeypatch.setattr(
-        "subprocess.run",
-        lambda *_a, **_kw: MagicMock(returncode=0, stderr=""),
+        "gateway.platforms.whatsapp_common.whatsapp_bridge_dependencies_fresh",
+        lambda _bridge_dir: True,
     )
-    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/npm")
-    # Patch (bridge_dir / "node_modules").exists() by stubbing Path.exists
-    # to True for that one specific subpath.  Easier: pre-create it as a
-    # symlink to /tmp.  But we can't write to the repo.  Instead, stub
-    # Path.exists wholesale to True for node_modules; the creds.json check
-    # in the same function still works because we wrote it ourselves.
-    _orig_exists = Path.exists
-    def _stub_exists(self):
-        if self.name == "node_modules":
-            return True
-        return _orig_exists(self)
-    monkeypatch.setattr(Path, "exists", _stub_exists)
 
     buf = io.StringIO()
     with redirect_stdout(buf):
