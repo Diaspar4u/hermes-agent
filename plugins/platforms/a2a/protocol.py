@@ -15,7 +15,7 @@ from concurrent.futures import Future
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from gateway.platforms._shared import coerce_port as _coerce_int
 from hermes_constants import get_hermes_home
