@@ -575,7 +575,7 @@ def test_terminal_poll_persists_once_across_processes(tmp_path) -> None:
 
     records = [
         json.loads(line)
-        for line in (tmp_path / "ctx-shared-process.jsonl").read_text().splitlines()
+        for line in (tmp_path / "ctx-shared-process.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert [(record["role"], record["task_id"]) for record in records] == [
         ("agent", "task-shared-process"),
