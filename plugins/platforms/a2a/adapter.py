@@ -488,7 +488,7 @@ class A2AAdapter(BasePlatformAdapter):
             "Another background A2A task is already active for this context, or the adapter "
             "has reached its 32-task background limit.")
         assert finalized is not None
-        protocol.metrics.tasks_failed += 1
+        protocol.metrics.tasks_failed += 1  # type: ignore[attr-defined]
         return self.tasks.to_task(finalized)
 
     def _pop_pending(self, task_id: str) -> None:

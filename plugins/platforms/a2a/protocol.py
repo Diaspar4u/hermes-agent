@@ -15,7 +15,7 @@ from concurrent.futures import Future
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from gateway.platforms._shared import coerce_port as _coerce_int
 
@@ -464,7 +464,7 @@ class TaskStore:
         next_offset = offset + page_size if offset + page_size < total else 0
         return (page, next_offset, total) if with_total else (page, next_offset)
 
-    def orphan_ids(self, timeout_seconds: int = 300, skip: Optional[set[str]] = None) -> list[str]:
+    def orphan_ids(self, timeout_seconds: int = 300, skip: Optional[set[str]] = None) -> List[str]:
         skip = skip or set()
         with self._lock:
             stale = [tid for tid, rec in self._tasks.items() if tid not in skip
@@ -472,7 +472,7 @@ class TaskStore:
                      and time.time() - rec["created_at"] > timeout_seconds]
         return stale
 
-    def fail_orphans(self, timeout_seconds: int = 300, skip: Optional[set[str]] = None) -> list[str]:
+    def fail_orphans(self, timeout_seconds: int = 300, skip: Optional[set[str]] = None) -> List[str]:
         stale = self.orphan_ids(timeout_seconds, skip)
         return [tid for tid in stale if self.complete(tid, STATE_FAILED, "[task orphaned — no reply produced]")]
 
