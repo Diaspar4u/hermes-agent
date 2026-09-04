@@ -279,7 +279,7 @@ class TestAudit:
         security.audit("inbound", "peer-y", "task-1", "hello world")
         audit_file = tmp_path / "a2a_audit.jsonl"
         assert audit_file.exists()
-        rec = json.loads(audit_file.read_text().strip().splitlines()[-1])
+        rec = json.loads(audit_file.read_text(encoding="utf-8").strip().splitlines()[-1])
         assert rec["direction"] == "inbound"
         assert rec["peer"] == "peer-y"
         assert rec["task_id"] == "task-1"
@@ -1703,6 +1703,7 @@ class TestV1SpecRegressionFixes:
         assert calls[0][1]['tenant'] == 'team'
         assert calls[0][1]['input_id']
         assert not (tmp_path / 'state.db').exists()
+
 
 
 
