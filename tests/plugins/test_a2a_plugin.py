@@ -201,7 +201,7 @@ class TestAudit:
         security.audit("inbound", "peer-y", "task-1", "hello world")
         audit_file = tmp_path / "a2a_audit.jsonl"
         assert audit_file.exists()
-        rec = json.loads(audit_file.read_text().strip().splitlines()[-1])
+        rec = json.loads(audit_file.read_text(encoding="utf-8").strip().splitlines()[-1])
         assert rec["direction"] == "inbound"
         assert rec["peer"] == "peer-y"
         assert rec["task_id"] == "task-1"
@@ -1625,7 +1625,7 @@ print('fake reply')
         assert (reply, state) == ("fake reply", protocol.STATE_COMPLETED)
         reply2, state2 = adapter._forward_to_profile(agent, "peer", "ctx/unsafe value", "again")
         assert (reply2, state2) == ("fake reply", protocol.STATE_COMPLETED)
-        argv_lines = [json.loads(line) for line in calls.read_text().splitlines()]
+        argv_lines = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
         assert "--resume" not in argv_lines[0]
         assert argv_lines[1][argv_lines[1].index("--resume") + 1] == "sess-1"
         con = sqlite3.connect(db)
