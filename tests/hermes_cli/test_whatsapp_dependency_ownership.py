@@ -24,6 +24,7 @@ def test_explicit_maintenance_paths_refresh_and_stamp_whatsapp_dependencies(
     checkout.mkdir()
     (checkout / "package.json").write_text("{}", encoding="utf-8")
     (bridge_dir / "node_modules").mkdir(parents=True)
+    (bridge_dir / "bridge.js").write_text("// bridge")
     (bridge_dir / "package.json").write_text(
         '{"dependencies": {}}', encoding="utf-8"
     )
@@ -55,7 +56,7 @@ def test_explicit_maintenance_paths_refresh_and_stamp_whatsapp_dependencies(
 
     monkeypatch.setattr("subprocess.run", fake_run)
 
-    assert _whatsapp_install_bridge(bridge_dir) is True
+    assert _whatsapp_install_bridge(bridge_dir) == bridge_dir
     stamp = bridge_dir / "node_modules" / ".hermes-pkg-hash"
     cli_stamp = stamp.read_text(encoding="utf-8-sig").strip()
     assert cli_stamp
@@ -85,10 +86,10 @@ def test_explicit_maintenance_paths_refresh_and_stamp_whatsapp_dependencies(
     assert update_stamp and update_stamp != dashboard_stamp
     assert installs == ["cli", "dashboard", "update"]
 
-@pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.parametrize("relocated", [False, True])
 @pytest.mark.parametrize("npm_available", [False, True])
 def test_explicit_callers_share_the_owner_and_translate_success(
-    tmp_path, monkeypatch, changed, npm_available
+    tmp_path, monkeypatch, relocated, npm_available
 ):
     from types import SimpleNamespace
 
@@ -119,12 +120,13 @@ def test_explicit_callers_share_the_owner_and_translate_success(
 
     def shared_owner(target, **kwargs):
         calls.append((target, kwargs))
-        return changed
+        return tmp_path / "prepared" if relocated else target
 
-    monkeypatch.setattr(whatsapp_common, "ensure_whatsapp_bridge_dependencies", shared_owner)
+    monkeypatch.setattr(whatsapp_common, "prepare_whatsapp_bridge_runtime", shared_owner)
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: pytest.fail("caller installed independently"))
-    assert _whatsapp_install_bridge(bridge) is True
-    assert _ensure_whatsapp_bridge_dependencies(bridge) is None
+    expected = tmp_path / "prepared" if relocated else bridge
+    assert _whatsapp_install_bridge(bridge) == expected
+    assert _ensure_whatsapp_bridge_dependencies(bridge) == expected
     assert source_build.refresh_installed_whatsapp_bridge(tmp_path) is None
     assert calls == [
         (bridge, {"npm": setup_npm, "env": setup_env}),
@@ -153,8 +155,8 @@ def test_explicit_callers_translate_typed_failure_and_updater_label(tmp_path, mo
     def failure(*args, **kwargs):
         raise whatsapp_common.WhatsAppBridgeDependencyError("transaction failed")
 
-    monkeypatch.setattr(whatsapp_common, "ensure_whatsapp_bridge_dependencies", failure)
-    assert _whatsapp_install_bridge(bridge) is False
+    monkeypatch.setattr(whatsapp_common, "prepare_whatsapp_bridge_runtime", failure)
+    assert _whatsapp_install_bridge(bridge) is None
     with pytest.raises(HTTPException) as error:
         _ensure_whatsapp_bridge_dependencies(bridge)
     assert error.value.status_code == 500
@@ -177,6 +179,7 @@ def test_updater_preserves_resolved_npm_and_selected_python_in_filtered_environm
     (bridge / "node_modules").mkdir(parents=True)
     (bridge / "package.json").write_text("{}")
     (bridge / "package-lock.json").write_text('{"lockfileVersion": 3}')
+    (bridge / "bridge.js").write_text("// bridge")
     build_env = {"PYTHON": str(tmp_path / "selected-python"), "PATH": "/safe/bin",
                  "HOME": str(tmp_path / "home"), "TMPDIR": str(tmp_path),
                  "NPM_CONFIG_CACHE": str(tmp_path / "cache"),

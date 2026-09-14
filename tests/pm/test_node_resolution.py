@@ -196,6 +196,7 @@ def npm_probe(node_store, monkeypatch):
         'const root = i < 0 ? process.cwd() : process.argv[i + 1];\n'
         'fs.mkdirSync(path.join(root, "node_modules/.bin"), {recursive:true});\n'
         'fs.writeFileSync(path.join(root, "node_modules/.bin/test-server"), "ready");\n'
+        'fs.writeFileSync(path.join(root, "node_modules/called.json"), JSON.stringify({argv: process.argv, env: process.env}));\n'
         'fs.writeFileSync(path.join(root, "called.json"), JSON.stringify({argv: process.argv, env: process.env}));\n',
         encoding="utf-8",
     )
@@ -225,14 +226,16 @@ def npm_consumers(npm_probe, tmp_path, monkeypatch):
     bridge = tmp_path / "bridge"
     bridge.mkdir()
     (bridge / "package.json").write_text('{"name":"test-bridge"}', encoding="utf-8")
+    (bridge / "package-lock.json").write_text('{"lockfileVersion":3}', encoding="utf-8")
+    (bridge / "bridge.js").write_text("// fixture bridge\n", encoding="utf-8")
     monkeypatch.setattr(photon, "_sidecar_dir", lambda: bridge)
     monkeypatch.setattr(cli, "_sidecar_dir", lambda: bridge)
     return {
         "lsp": (lambda: _install_npm("test-pkg", "test-server"), home / "lsp"),
         "photon": (photon._reinstall_sidecar_deps, bridge),
         "photon-cli": (cli._install_sidecar, bridge),
-        "cli": (lambda: _whatsapp_install_bridge(bridge), bridge),
-        "dashboard": (lambda: _ensure_whatsapp_bridge_dependencies(bridge), bridge),
+        "cli": (lambda: _whatsapp_install_bridge(bridge), bridge / "node_modules"),
+        "dashboard": (lambda: _ensure_whatsapp_bridge_dependencies(bridge), bridge / "node_modules"),
     }
 
 
@@ -250,6 +253,8 @@ def test_npm_consumers_execute_with_pm_node(npm_probe, npm_consumers, consumer):
         assert result["argv"][2:] == [
             "install", "--prefix", str(output_dir), "--silent", "--no-fund", "--no-audit", "test-pkg",
         ]
+    elif consumer in {"cli", "dashboard"}:
+        assert result["argv"][2:] == ["ci", "--silent"]
 
 
 @pytest.mark.platforms("posix")
@@ -322,23 +327,34 @@ def test_dashboard_pairing_prepares_npm_before_node_lookup(npm_probe, tmp_path, 
     from gateway.platforms import whatsapp_common
     from hermes_cli.web_routers.messaging import _spawn_whatsapp_pairing_process
 
-    _home, node, _npm, publish = npm_probe
+    _home, node, npm, publish = npm_probe
     node_facts = paths.facts_path().read_bytes()
     paths.facts_path().unlink()
     bridge = tmp_path / "bridge"
     bridge.mkdir()
+    (bridge / "package.json").write_text('{"name":"test-bridge"}', encoding="utf-8")
+    (bridge / "package-lock.json").write_text('{"lockfileVersion":3}', encoding="utf-8")
     (bridge / "bridge.js").write_text(
         'console.log(JSON.stringify({argv:process.argv, path:process.env.PATH}));\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(whatsapp_common, "resolve_whatsapp_bridge_dir", lambda: bridge)
+    # Keep native discovery and preparation on the fixture's writable bundle.
+    monkeypatch.setattr(whatsapp_common, "_bundled_whatsapp_bridge_dir", lambda: bridge)
     installs = []
+    find_node_executable = hermes_constants.find_node_executable
+
+    def find_after_npm(name):
+        if name == "node":
+            assert installs == [("npm", True)]
+        return find_node_executable(name)
 
     def ensure(name, **kwargs):
+        assert name == "npm"
         installs.append((name, kwargs.get("explicit", False)))
         paths.facts_path().write_bytes(node_facts)
         return publish()
 
+    monkeypatch.setattr(hermes_constants, "find_node_executable", find_after_npm)
     monkeypatch.setattr(pm, "ensure", ensure)
     child = _spawn_whatsapp_pairing_process(tmp_path / "session", "bot")
     try:
@@ -349,8 +365,15 @@ def test_dashboard_pairing_prepares_npm_before_node_lookup(npm_probe, tmp_path, 
             child.kill()
             child.wait(timeout=10)
     assert installs == [("npm", True)]
+    npm_result = json.loads((bridge / "node_modules" / "called.json").read_text(encoding="utf-8-sig"))
+    assert Path(npm_result["argv"][1]) == npm
+    assert npm_result["argv"][2:] == ["ci", "--silent"]
+    assert shutil.which("node", path=npm_result["env"]["PATH"]) == str(node)
     result = json.loads(output)
-    assert "--pair-json" in result["argv"]
+    assert result["argv"][1:] == [
+        str(bridge.resolve() / "bridge.js"), "--pair-only", "--pair-json",
+        "--session", str(tmp_path / "session"),
+    ]
     assert shutil.which("node", path=result["path"]) == str(node)
 
 
