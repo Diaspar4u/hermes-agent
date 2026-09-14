@@ -95,37 +95,22 @@ def _whatsapp_allowed_users(wa_mode: str, get_env_value, save_env_value) -> None
 
 
 def _whatsapp_install_bridge(bridge_dir) -> bool:
-    """Step 4 of ``hermes whatsapp``: ``npm install`` the bridge when needed. False = stop."""
+    """Step 4 of ``hermes whatsapp``: prepare dependencies; False stops setup."""
     from gateway.platforms.whatsapp_common import (
-        record_whatsapp_bridge_dependency_fingerprint,
-        whatsapp_bridge_dependencies_fresh,
+        WhatsAppBridgeDependencyError,
+        ensure_whatsapp_bridge_dependencies,
     )
-    from hermes_constants import find_node_executable, with_hermes_node_path
-    if whatsapp_bridge_dependencies_fresh(bridge_dir):
-        print("✓ Bridge dependencies already installed")
-        return True
-    print("\n→ Installing WhatsApp bridge dependencies (this can take a few minutes)...")
-    npm = find_node_executable("npm")
-    if not npm:
-        print("  ✗ npm not found on PATH — install Node.js first")
-        return False
+
+    print("\n→ Checking WhatsApp bridge dependencies (installation can take a few minutes)...")
     try:
-        result = subprocess.run(
-            [npm, "install", "--no-fund", "--no-audit", "--progress=false"],
-            cwd=str(bridge_dir), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-            encoding="utf-8", errors="replace", env=with_hermes_node_path())
+        changed = ensure_whatsapp_bridge_dependencies(bridge_dir)
     except KeyboardInterrupt:
         print("\n  ✗ Install cancelled")
         return False
-    if result.returncode != 0:
-        err = (result.stderr or "").strip()
-        preview = "\n".join(err.splitlines()[-30:]) if err else "(no output)"
-        _say("  ✗ npm install failed:", preview)
+    except WhatsAppBridgeDependencyError as exc:
+        print(f"  ✗ {exc}")
         return False
-    if not record_whatsapp_bridge_dependency_fingerprint(bridge_dir):
-        print("  ✗ Dependencies installed, but their version stamp could not be written")
-        return False
-    print("  ✓ Dependencies installed")
+    print("  ✓ Dependencies installed" if changed else "✓ Bridge dependencies already installed")
     return True
 
 
