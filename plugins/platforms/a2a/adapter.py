@@ -630,8 +630,10 @@ class A2AAdapter(BasePlatformAdapter):
             self._activate_task(task_id)
             try:
                 reply, state = self._forward_to_profile(agent, peer, context_id, framed)
-                self._record_outcome(task_id, context_id, peer, state, reply)
-                return protocol.build_task(task_id, context_id, state, reply, created_at=rec["created_iso"]), None
+                self._finalize_task(pending, state, reply)
+                finalized = self.tasks.get(task_id)
+                assert finalized is not None
+                return self.tasks.to_task(finalized), None
             finally:
                 self._pop_pending(task_id)
         if self._loop is None or self._message_handler is None:
