@@ -9,8 +9,8 @@ import platform
 import re
 import signal
 import subprocess
+import time
 from contextlib import contextmanager, suppress
-from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 from typing import Dict, Optional, Any
@@ -1587,7 +1587,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             entry = {
                 "role": "user",
                 "content": "\n".join(content_parts),
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "timestamp": time.time(),
                 "observed": True,
             }
             if event.message_id:
