@@ -454,3 +454,47 @@ def test_device_qualified_bot_ids_match_bare_mention_and_quote_ids():
         _group_message("and this?", botIds=device_qualified, quotedParticipant="447999674698@s.whatsapp.net")
     ) is True
     assert adapter._should_process_message(_group_message("hello everyone", botIds=device_qualified)) is False
+
+
+def test_observed_row_keeps_its_own_timestamp(tmp_path, monkeypatch, caplog):
+    """An observed WhatsApp row must be persisted with the time it was observed.
+
+    ``_coerce_timestamp`` only trusts numbers and ``datetime``; an ISO string is replaced by the
+    write-time fallback and logs one ``Ignoring corrupt message timestamp`` WARNING per message
+    (same bug class as #118105 on the Telegram/Yuanbao observe paths).
+    """
+    import logging
+    import time as _time
+
+    from gateway.config import GatewayConfig
+    from gateway.session import SessionStore
+    from hermes_state import SessionDB
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    config = GatewayConfig(platforms={Platform.WHATSAPP: PlatformConfig(enabled=True)})
+    store = SessionStore(tmp_path / "sessions", config)
+    adapter = _make_adapter(
+        group_policy="open",
+        observe_unmentioned_group_messages=True,
+        observe_group_allow_from=["*"],
+    )
+    adapter._session_store = store
+    source = SessionSource(
+        platform=Platform.WHATSAPP,
+        chat_id="120363001234567890@g.us",
+        chat_type="group",
+        user_id="alice@lid",
+        user_name="Alice",
+    )
+    event = MessageEvent(text="background", message_type=MessageType.TEXT, source=source)
+
+    before = _time.time()
+    with caplog.at_level(logging.WARNING):
+        adapter._observe_unmentioned_group_event(event)
+    after = _time.time()
+
+    session_id = store.get_or_create_session(source).session_id
+    rows = SessionDB(tmp_path / "state.db").get_messages(session_id)
+    assert len(rows) == 1 and rows[0]["observed"]
+    assert before <= rows[0]["timestamp"] <= after
+    assert "corrupt message timestamp" not in caplog.text
