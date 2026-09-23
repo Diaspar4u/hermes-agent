@@ -9,7 +9,7 @@ import platform
 import re
 import signal
 import subprocess
-from datetime import datetime, timezone
+import time
 from contextlib import suppress
 from functools import wraps
 from pathlib import Path
@@ -926,7 +926,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             entry = {
                 "role": "user",
                 "content": "\n".join(content_parts),
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "timestamp": time.time(),
                 "observed": True,
             }
             if event.message_id:
