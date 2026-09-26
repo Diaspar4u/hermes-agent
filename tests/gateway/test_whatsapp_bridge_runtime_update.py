@@ -1162,7 +1162,7 @@ except common.WhatsAppBridgeDependencyError as error:
         return json.loads(output)
 
 
-@pytest.mark.macos_only
+@pytest.mark.platforms("macos")
 @pytest.mark.parametrize("alias_kind", ["same-path", "symlink", "case", "parent-case"])
 def test_subprocess_public_installer_excluded_during_root_replacement(
     tmp_path, alias_kind
@@ -1240,7 +1240,7 @@ with common._exclusive_whatsapp_bridge_transaction(bridge, timeout=1):
     assert _staging_leftovers(bridge) == []
 
 
-@pytest.mark.macos_only
+@pytest.mark.platforms("macos")
 def test_public_subprocess_installer_needs_only_writable_bridge_not_parent(tmp_path):
     if os.getuid() == 0:
         pytest.skip("root bypasses directory permission checks")
