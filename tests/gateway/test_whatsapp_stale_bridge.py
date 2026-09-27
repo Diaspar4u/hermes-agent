@@ -340,6 +340,70 @@ class TestBridgeSourceHash:
         custom.write_bytes(custom_bytes)
         assert _file_content_hash(custom) == hashlib.sha256(custom_bytes).hexdigest()[:16]
 
+@pytest.mark.asyncio
+async def test_custom_managed_entry_changes_prevent_running_bridge_reuse(tmp_path):
+    from gateway.platforms.whatsapp_common import whatsapp_bridge_source_hash
+
+    bridge_dir = _setup_managed_bridge_dir(tmp_path)
+    entry = bridge_dir / "custom-bridge.js"
+    entry.write_text("// custom version A\n", encoding="utf-8")
+    running_hash = whatsapp_bridge_source_hash(entry)
+    assert running_hash
+    adapter = _make_adapter(str(entry), tmp_path / "session")
+    adapter._probe_bridge_health = AsyncMock(return_value=(True, {
+        "status": "connected", "scriptHash": running_hash, "sendReadReceipts": False,
+    }))
+    adapter._mark_connected = MagicMock()
+    adapter._attach_to_bridge = MagicMock()
+    adapter._wire_plugin_handlers = MagicMock()
+    assert await adapter._reuse_running_bridge(entry) is True
+    adapter._attach_to_bridge.assert_called_once_with(None)
+    adapter._attach_to_bridge.reset_mock()
+
+    entry.write_text("// custom version B\n", encoding="utf-8")
+
+    assert await adapter._reuse_running_bridge(entry) is False
+    adapter._attach_to_bridge.assert_not_called()
+
+
+def test_python_and_node_hash_selected_custom_managed_entry(tmp_path):
+    from gateway.platforms.whatsapp_common import whatsapp_bridge_source_hash
+    from hermes_constants import find_node_executable
+
+    bridge_dir = _setup_managed_bridge_dir(tmp_path)
+    default_entry = bridge_dir / "bridge.js"
+    custom_entry = bridge_dir / "custom-bridge.js"
+    custom_entry.write_text("// custom version A\n", encoding="utf-8")
+    node = find_node_executable("node")
+    assert node, "Node is required for the Python/Node bridge hash parity test"
+    helper_uri = (
+        Path(__file__).resolve().parents[2] / "scripts" / "whatsapp-bridge" / "bridge_helpers.js"
+    ).as_uri()
+    script = """
+const { bridgeSourceHash } = await import(process.argv[1]);
+process.stdout.write(JSON.stringify(process.argv.slice(2).map(bridgeSourceHash)));
+"""
+
+    def hashes():
+        python_hashes = [whatsapp_bridge_source_hash(path) for path in (default_entry, custom_entry)]
+        result = subprocess.run(
+            [node, "--input-type=module", "-e", script, helper_uri, str(default_entry), str(custom_entry)],
+            check=True, capture_output=True, text=True, timeout=30,
+        )
+        assert json.loads(result.stdout) == python_hashes
+        return python_hashes
+
+    original_default, original_custom = hashes()
+    assert original_default and original_custom
+    custom_entry.write_text("// custom version B\n", encoding="utf-8")
+    changed_default, changed_custom = hashes()
+    assert changed_default == original_default
+    assert changed_custom and changed_custom != original_custom
+    assert changed_custom != changed_default
+    custom_entry.unlink()
+    assert hashes() == [original_default, ""]
+
+
 def test_python_and_node_manifest_validators_have_exact_rejection_parity():
     from gateway.platforms.whatsapp_common import _validated_runtime_files
     from hermes_constants import find_node_executable

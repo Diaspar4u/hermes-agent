@@ -1063,6 +1063,7 @@ def whatsapp_bridge_source_hash(path: Path) -> str:
 
     A directory whose package.json declares ``hermesRuntimeFiles`` is managed:
     every declared file must be readable and participates in manifest order.
+    An unlisted selected entry is appended and must also be readable.
     A bridge without that metadata retains the historical bridge.js plus
     optional bridge_helpers.js handshake used by custom single-file bridges.
     """
@@ -1091,6 +1092,8 @@ def whatsapp_bridge_source_hash(path: Path) -> str:
     if runtime_files is not None:
         if not runtime_files:
             return ""
+        if path.name not in runtime_files:
+            runtime_files = (*runtime_files, path.name)
         return _framed_files_hash(path.parent, runtime_files, truncate=16)
 
     helper_path = path.with_name("bridge_helpers.js")
@@ -1461,6 +1464,10 @@ def prepare_whatsapp_bridge_runtime(
     promotion. Caught failures restore the prior runtime; quarantined or
     uncertain state remains available for recovery. This is bounded rollback,
     not a crash journal or atomic visibility to concurrent runtime readers.
+    Successful mirror refreshes retain the full prior runtime, including
+    dependencies, at the logged backup path. Backups consume disk and are not
+    automatically reconciled or removed; stop old writers and manually
+    reconcile state before cleanup.
     """
     bundled, persistent = _runtime_bridge_paths(bundled_bridge, persistent_bridge)
     try:
@@ -1606,11 +1613,11 @@ def _prepare_whatsapp_bridge_mirror(
                     _bounded_redacted_dependency_output(str(cleanup_error)),
                 )
     if committed and backup is not None and _path_exists_without_following(backup):
-        try:
-            _remove_path_without_following(backup)
-        except Exception as cleanup_error:
-            logger.warning(
-                "[whatsapp] Bridge update succeeded but the state-bearing backup remains at %s: %s",
-                backup, _bounded_redacted_dependency_output(str(cleanup_error)),
-            )
+        # Old writers may still update the backup after the non-overwriting merge.
+        logger.warning(
+            "[whatsapp] Bridge update succeeded; state-bearing backup remains at %s "
+            "for recovery. State is not automatically reconciled; stop old writers "
+            "and manually reconcile state before removing the backup.",
+            backup,
+        )
     return live

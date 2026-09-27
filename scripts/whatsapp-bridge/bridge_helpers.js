@@ -124,6 +124,8 @@ export function bridgeSourceHash(scriptPath) {
     }
 
     if (runtimeFiles) {
+      const selectedName = path.basename(scriptPath);
+      if (!runtimeFiles.includes(selectedName)) runtimeFiles = [...runtimeFiles, selectedName];
       return framedFileHash(
         runtimeFiles.map(name => [name, readFileSync(path.join(directory, name))]),
         16,

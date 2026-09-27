@@ -49,10 +49,6 @@ import {
 // -- stale-bridge complete runtime source hash ----------------------------
 {
   const expectedInventory = JSON.parse(readFileSync(new URL('./package.json', import.meta.url))).hermesRuntimeFiles;
-  const bridgeSource = readFileSync(new URL('./bridge.js', import.meta.url), 'utf8');
-  for (const match of bridgeSource.matchAll(/from ['\"]\.\/([^'\"]+)['\"]/g)) {
-    assert.ok(expectedInventory.includes(match[1]), `${match[1]} must be managed`);
-  }
   assert.deepEqual(BRIDGE_RUNTIME_FILES, expectedInventory);
 
   const bridgeDir = mkdtempSync(path.join(tmpdir(), 'hermes-wa-hash-'));

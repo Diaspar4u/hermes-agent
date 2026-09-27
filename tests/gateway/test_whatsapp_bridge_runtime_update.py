@@ -1368,7 +1368,15 @@ def test_stale_persistent_runtime_is_built_in_staging_then_replaced(
     assert (persistent / "node_modules" / ".hermes-pkg-hash").read_text(
         encoding="utf-8"
     ) == whatsapp_common.whatsapp_bridge_dependency_fingerprint(persistent)
-    assert _runtime_staging_leftovers(persistent) == []
+    backups = list(persistent.parent.glob(f".{persistent.name}.backup-*"))
+    assert len(backups) == 1
+    assert _runtime_staging_leftovers(persistent) == backups
+    assert (backups[0] / "node_modules" / "installed-version").read_text(
+        encoding="utf-8"
+    ) == "old\n"
+    assert (backups[0] / "session" / "nested" / "creds.json").read_text(
+        encoding="utf-8"
+    ) == "secret-state\n"
 
 
 def test_persistent_state_symlink_is_preserved_without_dereferencing(
@@ -1446,6 +1454,57 @@ def test_state_copier_rejects_simulated_interior_windows_reparse_point(
         match="interior junction or reparse point",
     ):
         whatsapp_common._copy_persistent_bridge_state(source, destination)
+
+
+@pytest.mark.parametrize("write_promoted_state", [False, True], ids=["old-tree-only", "both-trees"])
+def test_runtime_refresh_retains_state_written_just_before_backup_rename(
+    tmp_path, monkeypatch, caplog, write_promoted_state
+):
+    bundled = tmp_path / "install"
+    persistent = tmp_path / "persistent"
+    _seed_managed_runtime(bundled, "2.0.0")
+    _seed_managed_runtime(persistent, "1.0.0")
+    (persistent / "session").mkdir()
+    state_file = persistent / "session" / "creds.json"
+    state_file.write_bytes(b"state-A\n")
+    state_time = state_file.stat().st_mtime_ns
+    monkeypatch.setattr(subprocess, "run", _successful_npm_ci([]))
+    real_replace = os.replace
+    backups = []
+    promoted = []
+
+    def rename_with_state_write(source, destination):
+        source, destination = Path(source), Path(destination)
+        if source == persistent and destination.name.startswith(".persistent.backup-"):
+            # The native second copy has finished; write immediately before rename.
+            state_file.write_bytes(b"state-B\n")
+            os.utime(state_file, ns=(state_time, state_time))
+            backups.append(destination)
+        result = real_replace(source, destination)
+        if destination == persistent and source.name.startswith(".persistent.staging-"):
+            assert state_file.read_bytes() == b"state-A\n"
+            promoted.append(destination)
+            if write_promoted_state:
+                state_file.write_bytes(b"state-C\n")
+                # Equal timestamps and sizes cannot establish write ordering.
+                os.utime(state_file, ns=(state_time, state_time))
+        return result
+
+    monkeypatch.setattr(os, "replace", rename_with_state_write)
+    caplog.set_level(logging.WARNING, logger=whatsapp_common.logger.name)
+
+    assert whatsapp_common.prepare_whatsapp_bridge_runtime(bundled, persistent) == persistent
+
+    assert len(backups) == len(promoted) == 1
+    assert backups[0].is_dir(), "the only copy of late old-runtime state must remain recoverable"
+    assert (backups[0] / "session" / "creds.json").read_bytes() == b"state-B\n"
+    if write_promoted_state:
+        assert state_file.read_bytes() == b"state-C\n"
+    assert whatsapp_common.whatsapp_bridge_dependencies_fresh(persistent)
+    assert (persistent / "bridge.js").read_bytes() == (bundled / "bridge.js").read_bytes()
+    assert str(backups[0]) in caplog.text
+    assert "recover" in caplog.text.lower()
+    assert "backup" in caplog.text.lower()
 
 
 def test_final_backup_merge_never_overwrites_newer_live_state(
@@ -1610,7 +1669,10 @@ except common.WhatsAppBridgeDependencyError as exc:
         assert (live / name).read_bytes() == (bundle / name).read_bytes()
     assert (live / "state").read_text() == "keep"
     assert whatsapp_common.whatsapp_bridge_dependencies_fresh(live)
-    assert _runtime_staging_leftovers(live) == []
+    backups = list(tmp_path.glob(".live.backup-*"))
+    assert len(backups) == 1
+    assert _runtime_staging_leftovers(live) == backups
+    assert (backups[0] / "state").read_text() == "keep"
 
 
 
@@ -1853,7 +1915,7 @@ def test_runtime_rollback_failure_is_typed_and_preserves_both_diagnostics(
     assert "simulated rollback quarantine failure" in caplog.text
 
 
-def test_runtime_backup_cleanup_failure_warns_and_preserves_recovery(
+def test_runtime_success_retains_backup_and_warns_about_manual_recovery(
     tmp_path, monkeypatch, caplog
 ):
     bundled = tmp_path / "install"
@@ -1866,16 +1928,6 @@ def test_runtime_backup_cleanup_failure_warns_and_preserves_recovery(
     monkeypatch.setattr(
         whatsapp_common.subprocess, "run", _successful_npm_ci(calls)
     )
-    real_remove = whatsapp_common._remove_path_without_following
-
-    def fail_runtime_backup_cleanup(path):
-        if Path(path).name.startswith(".persistent.backup-"):
-            raise OSError("cleanup https://user:secret@invalid/backup failed")
-        return real_remove(path)
-
-    monkeypatch.setattr(
-        whatsapp_common, "_remove_path_without_following", fail_runtime_backup_cleanup
-    )
     caplog.set_level(logging.WARNING, logger=whatsapp_common.logger.name)
 
     assert whatsapp_common.prepare_whatsapp_bridge_runtime(
@@ -1886,8 +1938,10 @@ def test_runtime_backup_cleanup_failure_warns_and_preserves_recovery(
     assert len(backups) == 1
     assert (backups[0] / "state.json").read_text(encoding="utf-8") == "state\n"
     assert "state-bearing backup remains" in caplog.text
-    assert "secret" not in caplog.text
-    assert "<redacted-url>" in caplog.text
+    assert str(backups[0]) in caplog.text
+    assert "for recovery" in caplog.text
+    assert "not automatically reconciled" in caplog.text
+    assert "manually reconcile" in caplog.text
 
 
 def test_runtime_staging_cleanup_failure_warns_and_preserves_recovery(
