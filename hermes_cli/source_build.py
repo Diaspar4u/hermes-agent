@@ -71,14 +71,28 @@ def prepare_source_dependencies(project_root: Path, workspaces: tuple[str, ...],
 
 
 def refresh_installed_whatsapp_bridge(project_root: Path) -> None:
-    """Refresh an existing WhatsApp bridge during source install/update completion."""
-    bridge_dir = project_root / "scripts" / "whatsapp-bridge"
-    if not (bridge_dir / "node_modules").is_dir():
-        return
-    from hermes_cli.main_platform_setup import _whatsapp_install_bridge
+    """Prepare an already-used checkout or persistent mirror during source updates."""
+    from hermes_constants import get_hermes_home
 
-    if not _whatsapp_install_bridge(bridge_dir):
-        raise RuntimeError("WhatsApp bridge dependency refresh failed")
+    bridge_dir = project_root / "scripts" / "whatsapp-bridge"
+    mirror = get_hermes_home() / "scripts" / "whatsapp-bridge"
+    if not (bridge_dir / "node_modules").is_dir() and not os.path.lexists(mirror):
+        return
+    from gateway.platforms.whatsapp_common import (
+        WhatsAppBridgeDependencyError,
+        prepare_whatsapp_bridge_runtime,
+    )
+
+    env = source_build_env(explicit=True)
+    npm = shutil.which("npm", path=env["PATH"])
+    if npm is None:
+        raise RuntimeError("WhatsApp bridge dependency refresh failed: npm binary is missing after preparation")
+    print("→ Preparing WhatsApp bridge runtime...")
+    try:
+        prepare_whatsapp_bridge_runtime(bridge_dir, npm=npm, env=env)
+    except WhatsAppBridgeDependencyError as exc:
+        raise RuntimeError(f"WhatsApp bridge dependency refresh failed: {exc}") from exc
+    print("  ✓ WhatsApp bridge runtime prepared")
 
 
 def prepare_launch_dependencies(project_root: Path, *, env: dict) -> None:

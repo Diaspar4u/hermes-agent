@@ -29,7 +29,7 @@ def test_dashboard_reports_prepared_bridge_binary_missing(tmp_path, monkeypatch,
     if executable == "npm":
         operation = lambda: messaging._ensure_whatsapp_bridge_dependencies(bridge_dir)
     else:
-        monkeypatch.setattr(messaging, "_ensure_whatsapp_bridge_dependencies", lambda path: None)
+        monkeypatch.setattr(messaging, "_ensure_whatsapp_bridge_dependencies", lambda path: path)
         operation = lambda: messaging._spawn_whatsapp_pairing_process(tmp_path / "session", "bot")
     with pytest.raises(HTTPException) as caught:
         operation()
@@ -47,13 +47,13 @@ def test_cli_reports_prepared_bridge_binary_missing(tmp_path, monkeypatch, capsy
     bridge_dir.mkdir()
     (bridge_dir / "bridge.js").write_text("", encoding="utf-8")
     if executable == "npm":
-        if setup._whatsapp_install_bridge(bridge_dir) is not False:
+        if setup._whatsapp_install_bridge(bridge_dir) is not None:
             pytest.fail("CLI continued despite missing npm binary")
     else:
         monkeypatch.setattr(main, "_require_tty", lambda command: None)
         monkeypatch.setattr(setup, "_whatsapp_choose_mode", lambda *args: "bot")
         monkeypatch.setattr(setup, "_whatsapp_allowed_users", lambda *args: None)
-        monkeypatch.setattr(setup, "_whatsapp_install_bridge", lambda path: True)
+        monkeypatch.setattr(setup, "_whatsapp_install_bridge", lambda path: path)
         monkeypatch.setattr(whatsapp_common, "resolve_whatsapp_bridge_dir", lambda: bridge_dir)
         monkeypatch.setattr(main, "get_hermes_home", lambda: tmp_path)
         setup.cmd_whatsapp(SimpleNamespace())
