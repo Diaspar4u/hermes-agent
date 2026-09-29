@@ -553,7 +553,7 @@ def persist_message_once(context_id: str, role: str, text: str, task_id: str) ->
         with _conversation_lock:
             with _conversation_file_lock(path):
                 if path.exists():
-                    with path.open("r", encoding="utf-8") as handle:
+                    with path.open("r", encoding="utf-8-sig") as handle:
                         for line in handle:
                             try:
                                 existing = json.loads(line)
