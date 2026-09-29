@@ -27,8 +27,8 @@ from gateway.platforms.base import BasePlatformAdapter, ProcessingOutcome, descr
 from gateway.platforms.event import MessageEvent
 from gateway.platforms.helpers import typing_metadata_for_turn
 from gateway.response_filters import (
-    display_kind_for_event, display_metadata_for_event, is_machinery_display_kind, persisted_user_metadata_for_event,
-    reply_expected_metadata,
+    delegated_continuation_text, display_kind_for_event, display_metadata_for_event, is_machinery_display_kind,
+    persisted_user_metadata_for_event, reply_expected_metadata,
 )
 from gateway.warning_notifications import diagnostic_metadata, diagnostic_turn_muted, diagnostic_wake_muted
 from gateway.session import (
@@ -1801,7 +1801,7 @@ class GatewayTurnMixin(GatewayBackgroundMixin, GatewayTurnPrepareMixin, GatewayT
             # The follow-up is its own sender's turn: approvals it raises name that sender, not the opener.
             with scoped_turn_actor(pending_event, self._session_state(session_key).turn) if pending_event is not None else nullcontext():
                 followup_result = await self._run_agent(
-                    message=next_message, context_prompt=turn_ctx.context_prompt, history=updated_history,
+                    message=delegated_continuation_text(pending_event, next_message), context_prompt=turn_ctx.context_prompt, history=updated_history,
                     source=next_source, session_id=session_id, session_key=next_session_key,
                     run_generation=run_generation, _interrupt_depth=_interrupt_depth + 1,
                     event_message_id=next_message_id, inbound_message_id=next_inbound_id,
