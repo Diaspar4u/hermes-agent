@@ -6,6 +6,8 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from gateway.config import Platform
 from plugins.platforms.telegram import topic_tool
 
@@ -35,7 +37,7 @@ def test_topic_start_creates_current_chat_topic_and_wakes_it(monkeypatch):
     loop_thread = threading.Thread(target=loop.run_forever)
     loop_thread.start()
     runner = SimpleNamespace(adapters={Platform.TELEGRAM: adapter}, _gateway_loop=loop)
-    wake = AsyncMock()
+    admit = AsyncMock()
     values = {
         "HERMES_SESSION_PLATFORM": "telegram",
         "HERMES_SESSION_CHAT_ID": "-100123",
@@ -50,7 +52,7 @@ def test_topic_start_creates_current_chat_topic_and_wakes_it(monkeypatch):
     monkeypatch.setattr(session_context, "get_session_env", lambda key, default="": values.get(key, default))
 
     try:
-        with patch("gateway.wake.deliver_wake", wake):
+        with patch("gateway.wake.admit_gateway_event", admit):
             result = json.loads(
                 topic_tool.telegram_topic_start(
                     {"topic_name": "Research", "prompt": "Research the launch."}
@@ -70,16 +72,82 @@ def test_topic_start_creates_current_chat_topic_and_wakes_it(monkeypatch):
         "started": True,
     }
     create_thread.assert_awaited_once_with("-100123", "Research")
-    wake.assert_awaited_once()
-    source = wake.await_args.kwargs["source"]
-    assert wake.await_args.args == (adapter,)
-    assert wake.await_args.kwargs["text"] == "Research the launch."
+    admit.assert_awaited_once()
+    await_args = admit.await_args
+    assert await_args is not None
+    assert await_args.args[0] is adapter
+    event = await_args.args[1]
+    assert event.text == "Research the launch."
+    assert event.internal is False
+    assert event.delegated_continuation is True
+    assert event.allow_gateway_control is False
+    source = event.source
     assert source.platform == Platform.TELEGRAM
     assert source.chat_id == "-100123"
     assert source.chat_type == "forum"
     assert source.thread_id == "444"
     assert source.user_id == "42"
     assert source.profile == "dev"
+
+
+@pytest.mark.asyncio
+async def test_topic_start_uses_normal_admission_and_respects_pause():
+    from agent import estop
+    from gateway.run import GatewayRunner
+
+    runner = object.__new__(GatewayRunner)
+    authorized = []
+
+    def authorize(source, *, allow_adapter_delegation=True):
+        authorized.append(source)
+        return True
+
+    runner._is_user_authorized = authorize
+    observed = {}
+
+    class AdmissionAdapter:
+        async def create_handoff_thread(self, chat_id, topic_name):
+            return "444"
+
+        async def handle_message(self, event):
+            event._gateway_accepted = True
+            observed["event"] = event
+            observed["reply"] = await runner._handle_message(event)
+
+    estop.engage(reason="maintenance")
+    try:
+        result = await topic_tool._create_topic_and_start(
+            AdmissionAdapter(),
+            chat_id="-100123",
+            topic_name="Research",
+            prompt="Research the launch.",
+            user_id="42",
+            profile="dev",
+        )
+    finally:
+        estop.disengage()
+
+    event = observed["event"]
+    assert result["success"] is True
+    assert authorized == [event.source]
+    assert event.internal is False
+    assert event.delegated_continuation is True
+    assert event.allow_gateway_control is False
+    assert "paused" in observed["reply"].lower()
+    assert "maintenance" in observed["reply"]
+    persisted = runner._hmwa_user_transcript_entry(
+        event,
+        SimpleNamespace(
+            persist_user_message=event.text,
+            message_text=event.text,
+            persist_user_timestamp=None,
+            persist_user_display_kind=None,
+            persistence_owner=None,
+        ),
+        1.0,
+    )
+    assert persisted["display_metadata"] == {"input_origin": "agent_delegated_continuation"}
+
 
 
 def test_topic_start_refuses_non_telegram_session(monkeypatch):

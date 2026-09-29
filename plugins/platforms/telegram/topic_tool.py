@@ -1,4 +1,4 @@
-"""Telegram-scoped tool for creating a topic and starting its first agent turn."""
+"""Telegram-scoped tool for creating a topic and starting a delegated continuation."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ TELEGRAM_TOPIC_START_SCHEMA = {
             },
             "prompt": {
                 "type": "string",
-                "description": "Initial user-authorized prompt to run in the new topic.",
+                "description": "Initial delegated prompt to continue the user's request in the new topic.",
             },
         },
         "required": ["topic_name", "prompt"],
@@ -61,8 +61,9 @@ async def _create_topic_and_start(
 
     from gateway.config import Platform
     from gateway.delivery import looks_like_telegram_private_chat_id
+    from gateway.platforms.event import MessageEvent, MessageType
     from gateway.session import SessionSource
-    from gateway.wake import deliver_wake
+    from gateway.wake import admit_gateway_event
 
     is_private = looks_like_telegram_private_chat_id(chat_id)
     source = SessionSource(
@@ -74,7 +75,14 @@ async def _create_topic_and_start(
         thread_id=str(thread_id),
         profile=profile,
     )
-    await deliver_wake(adapter, text=prompt, source=source)
+    event = MessageEvent(
+        text=prompt,
+        message_type=MessageType.TEXT,
+        source=source,
+        allow_gateway_control=False,
+        delegated_continuation=True,
+    )
+    await admit_gateway_event(adapter, event)
     return {
         "success": True,
         "platform": "telegram",

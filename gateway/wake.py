@@ -92,7 +92,7 @@ def session_owned_by_profile(config: Any, profile: Optional[str], session_id: An
     return row is not None and (row.profile_name or profile) == profile
 
 
-async def admit_internal_event(adapter: Any, event: Any) -> None:
+async def admit_gateway_event(adapter: Any, event: Any) -> None:
     """Require a concrete adapter admission, not merely a handler returning None.
 
     The public handler return stays unchanged. This receipt means scheduled/queued,
@@ -105,7 +105,7 @@ async def admit_internal_event(adapter: Any, event: Any) -> None:
         raise WakeNotAccepted("gateway is draining; retry after restart", reason="runtime_draining")
     await adapter.handle_message(event)
     if event._gateway_accepted is not True:
-        raise WakeNotAccepted()
+        raise WakeNotAccepted("gateway event not accepted by adapter")
     # handle_message can await before it claims or queues the event (Telegram topic recovery, the
     # busy handler's profile scope). A drain seen here dooms the stored event: the drain gate refuses
     # a claimed turn and the pending discard drops a queued follow-up. Refuse it so the producer
@@ -129,6 +129,11 @@ def _local_receipt(source: Any, display_text: str) -> dict:
         return {}
     from gateway.response_filters import INTERNAL_NOTIFICATION_DISPLAY_KIND
     return {"display_kind": INTERNAL_NOTIFICATION_DISPLAY_KIND, "display_text": receipt}
+
+
+async def admit_internal_event(adapter: Any, event: Any) -> None:
+    """Require admission for a trusted internal wake event."""
+    await admit_gateway_event(adapter, event)
 
 
 async def deliver_wake(adapter: Any, *, text: str, session_id: str = "", source: Any = None,
