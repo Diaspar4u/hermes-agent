@@ -61,10 +61,9 @@ class SSHEnvironment(BaseEnvironment):
 
     def __init__(self, host: str, user: str, cwd: str = "~",
                  timeout: int = 60, port: int = 22, key_path: str = "",
-                 probe_only: bool = False, sync: bool = True):
+                 probe_only: bool = False, sync_files: bool = True):
         super().__init__(cwd=cwd, timeout=timeout)
         self.host, self.user, self.port, self.key_path = host, user, port, key_path
-        self.sync_enabled = sync
         self.control_dir = Path(tempfile.gettempdir()) / "hermes-ssh"
         self.control_dir.mkdir(parents=True, exist_ok=True)
         # Short, deterministic socket name: the path must stay under macOS's 104-byte sun_path
@@ -76,7 +75,7 @@ class SSHEnvironment(BaseEnvironment):
             socket_key = f"{socket_key}:probe:{self._session_id}"
         _socket_id = hashlib.sha256(socket_key.encode()).hexdigest()[:16]
         self.control_socket = self.control_dir / f"{_socket_id}.sock"
-        _ensure_ssh_available(require_scp=self.sync_enabled)
+        _ensure_ssh_available(require_scp=sync_files)
         self._establish_connection()
         if probe_only:
             self._sync_manager = None
@@ -84,7 +83,7 @@ class SSHEnvironment(BaseEnvironment):
         self._remote_home_detected = False
         self._remote_home = self._detect_remote_home()
         self._sync_manager = None
-        if self.sync_enabled:
+        if sync_files:
             self._ensure_remote_dirs()
             self._sync_manager = FileSyncManager(
                 get_files_fn=lambda: iter_sync_files(f"{self._remote_home}/.hermes"),
