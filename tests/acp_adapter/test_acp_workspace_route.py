@@ -199,11 +199,10 @@ def test_delegated_acp_route_reaches_all_tools_and_sync_false_needs_no_scp(
         ),
     )
 
-    env = ssh_env.SSHEnvironment(
-        host="workspace.example",
-        user="developer",
+    env = terminal_tool_backends._build_ssh_env(
         cwd="/workspace/project",
-        sync=False,
+        timeout=180,
+        ssh_config={"host": "workspace.example", "user": "developer", "sync": False},
     )
     env._before_execute()
 
