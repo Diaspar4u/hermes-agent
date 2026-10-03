@@ -837,6 +837,17 @@ _real_profile_note_delivered: set = set()
 def stop_harness_daemons() -> None:
     """Stop every harness daemon this process drove, through the harness's own identity-checked
     ``--reload``; the next browser_exec respawns one on the endpoint it resolves then."""
+    with _browser_use_sessions_lock:
+        snapshot = list(_browser_use_sessions.items())
+    for key, state in snapshot:
+        with state["operation_lock"]:
+            with _browser_use_sessions_lock:
+                if _browser_use_sessions.get(key) is not state:
+                    continue
+            if _stop_browser_use_state(state):
+                with _browser_use_sessions_lock:
+                    if _browser_use_sessions.get(key) is state:
+                        _browser_use_sessions.pop(key, None)
     with _driven_daemons_lock:
         names = sorted(_driven_daemons)
         _driven_daemons.clear()
@@ -943,8 +954,9 @@ def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT
     started = time.time()
     def dispatch() -> dict[str, Any]:
         _attach_vault_supervisor(env, task_id)
-        with _driven_daemons_lock:
-            _driven_daemons.add(env.get("BU_NAME", "default"))
+        if lifecycle_state is None:
+            with _driven_daemons_lock:
+                _driven_daemons.add(env.get("BU_NAME", "default"))
         try:
             return {"proc": _run_cli_killing_process_group(cmd, code, env, timeout)}
         except subprocess.TimeoutExpired:
