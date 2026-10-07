@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from hermes_cli.main_platform_setup import _whatsapp_install_bridge
 from hermes_cli.web_routers.messaging import _ensure_whatsapp_bridge_dependencies
 
@@ -70,3 +72,39 @@ def test_explicit_maintenance_paths_refresh_and_stamp_whatsapp_dependencies(
     update_stamp = stamp.read_text(encoding="utf-8-sig").strip()
     assert update_stamp and update_stamp != dashboard_stamp
     assert installs == ["cli", "dashboard", "update"]
+
+
+@pytest.mark.parametrize("failed_step", ["feature dependencies", "WhatsApp bridge dependencies"])
+def test_update_attempts_whatsapp_and_independent_products_after_a_failure(tmp_path, monkeypatch, failed_step):
+    import hermes_cli.main_install_repair as install_repair
+    import hermes_cli.source_build as build
+
+    bridge = tmp_path / "scripts" / "whatsapp-bridge"
+    (bridge / "node_modules").mkdir(parents=True)
+    for frontend in ("ui-tui", "web"):
+        (tmp_path / frontend).mkdir()
+        (tmp_path / frontend / "package.json").write_text("{}", encoding="utf-8")
+    steps = []
+
+    def step(name):
+        def run(*_args, **_kwargs):
+            steps.append(name)
+            if name == failed_step:
+                raise RuntimeError("maintenance failed")
+            return True
+        return run
+
+    monkeypatch.setattr(install_repair, "_install_configured_features_missing_deps", step("feature dependencies"))
+    monkeypatch.setattr("hermes_cli.main_platform_setup._whatsapp_install_bridge", step("WhatsApp bridge dependencies"))
+    monkeypatch.setattr(build, "source_build_env", lambda **_kwargs: {})
+    monkeypatch.setattr(build, "prepare_source_dependencies", step("Node dependencies"))
+    monkeypatch.setattr(build, "source_product_current", lambda *_args: False)
+    monkeypatch.setattr(build, "build_source_tui", step("TUI build"))
+    monkeypatch.setattr(build, "build_source_web", step("web UI build"))
+    monkeypatch.setattr("hermes_cli.memory_provider_migration.migrate_all_homes", lambda: None)
+    monkeypatch.setattr("hermes_cli.left_core_migration.migrate_all_homes", lambda: None)
+
+    with pytest.raises(build.ProductBuildError) as failure:
+        build.build_update_products(tmp_path, desktop=False)
+    assert [name for name, _exc in failure.value.failures] == [failed_step]
+    assert steps == ["feature dependencies", "WhatsApp bridge dependencies", "Node dependencies", "TUI build", "web UI build"]
