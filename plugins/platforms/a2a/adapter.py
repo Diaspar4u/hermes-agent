@@ -560,7 +560,7 @@ class A2AAdapter(BasePlatformAdapter):
             return bool(entry and not entry[1].done() and self.tasks.set_progress(task_id, text))
 
     @staticmethod
-    def _task_id_for_send(reply_to: Optional[str], metadata: Optional[Dict[str, Any]]) -> str:
+    def _task_id_for_send(reply_to: Optional[str], metadata: Optional[dict[str, Any]]) -> str:
         metadata = metadata or {}
         return str(metadata.get("reply_to_message_id") or reply_to or "")
 
@@ -629,12 +629,14 @@ class A2AAdapter(BasePlatformAdapter):
                     try:
                         reply, state = self._forward_to_profile(agent, peer, context_id, framed, input_id=input_id or task_id)
                     except Exception as error:
+                        logger.exception("A2A profile forwarding failed")
                         reply, state = security.redact_outbound(f"Profile dispatch failed: {error}"), protocol.STATE_FAILED
                     self._resolve_task(task_id, state, reply)
 
                 try:
                     _daemon_thread(forward, f"a2a-forward-{task_id[:12]}")
                 except Exception as error:
+                    logger.exception("A2A forwarding worker could not start")
                     self._finalize_task(pending, protocol.STATE_FAILED,
                                         security.redact_outbound(f"Profile dispatch failed: {error}"))
                     finalized = self.tasks.get(task_id)
@@ -767,6 +769,7 @@ class A2AAdapter(BasePlatformAdapter):
                 try:
                     state, reply = future.result()
                 except Exception:
+                    logger.exception("A2A background task completion failed")
                     state, reply = protocol.STATE_FAILED, "[agent did not reply]"
                 self._finalize_task(pending, state, reply)
 

@@ -258,6 +258,7 @@ def a2a_get_task(args: dict, **_: Any) -> str:
     try:
         card = _fetch_card(base_url, headers, min(timeout, 30))
     except Exception:
+        logging.getLogger(__name__).debug("A2A task card lookup failed", exc_info=True)
         card = None
     tenant = _interface_tenant(card, peer)
     deadline, last_rendered, waited = time.monotonic() + wait_seconds, None, False
@@ -279,6 +280,7 @@ def a2a_get_task(args: dict, **_: Any) -> str:
             return (f"Error: peer '{agent}' rate limited us (HTTP 429). Retry later." if error.code == 429
                     else f"Error: GetTask on '{agent}' failed — HTTP {error.code}.")
         except Exception as error:
+            logging.getLogger(__name__).exception("A2A GetTask failed")
             return f"Error: GetTask on '{agent}' failed — {error}."
         if "error" in response:
             error = response["error"]
