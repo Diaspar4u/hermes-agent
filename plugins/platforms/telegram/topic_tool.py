@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
+
+logger = logging.getLogger(__name__)
 
 TELEGRAM_TOPIC_START_SCHEMA = {
     "name": "telegram_topic_start",
@@ -112,7 +115,7 @@ def telegram_topic_start(args: dict[str, Any], **_kwargs: Any) -> str:
         from gateway.run import _gateway_runner_ref
 
         runner = _gateway_runner_ref()
-    except Exception:
+    except ImportError:
         runner = None
     adapter = runner.adapters.get(Platform.TELEGRAM) if runner is not None else None
     if adapter is None:
@@ -131,6 +134,7 @@ def telegram_topic_start(args: dict[str, Any], **_kwargs: Any) -> str:
             getattr(runner, "_gateway_loop", None),
         )
     except Exception as exc:
+        logger.exception("Create topic and start failed")
         return _error(f"Create topic and start failed: {exc}")
     return json.dumps(result)
 
