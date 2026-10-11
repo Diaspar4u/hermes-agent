@@ -1169,25 +1169,6 @@ def _build_replay_entry(
     return entry
 
 
-_OBSERVED_CONTEXT_PROMPT_MARKERS = (
-    "observed Telegram group context",
-    "observed WhatsApp group context",
-)
-_OBSERVED_GROUP_CONTEXT_HEADER = "[Observed group context - context only, not requests]"
-_CURRENT_ADDRESSED_MESSAGE_HEADER = "[Current addressed message - answer only this unless it explicitly asks you to use the observed context]"
-
-
-def _uses_observed_group_context(channel_prompt: Optional[str]) -> bool:
-    """Return True for adapter turns that may include observed group chatter.
-
-    Observed rows must not replay as ordinary user turns, or a weak wake word makes old chatter look like work.
-    """
-    return bool(
-        channel_prompt
-        and any(marker in channel_prompt for marker in _OBSERVED_CONTEXT_PROMPT_MARKERS)
-    )
-
-
 def _csv_or_list_to_set(raw: Any) -> set[str]:
     """Normalize a config list or comma-separated scalar into a string set."""
     if raw is None:
@@ -1273,7 +1254,7 @@ def _build_gateway_agent_history(
     _msg_tz = _get_msg_tz()
     agent_history: list[dict[str, Any]] = []
     observed_group_context: list[str] = []
-    separate_observed_context = _uses_observed_group_context(channel_prompt)
+    separate_observed_context = group_observation.uses_observed_group_context(channel_prompt)
 
     for msg in history or []:
         role = msg.get("role")
@@ -1364,7 +1345,7 @@ def _wrap_current_message_with_observed_context(message: Any, observed_context: 
     if not observed_context:
         return message
 
-    prefix = f"{_OBSERVED_GROUP_CONTEXT_HEADER}\n{observed_context}\n\n{_CURRENT_ADDRESSED_MESSAGE_HEADER}\n"
+    prefix = f"{group_observation.OBSERVED_GROUP_CONTEXT_HEADER}\n{observed_context}\n\n{group_observation.CURRENT_ADDRESSED_MESSAGE_HEADER}\n"
 
     if isinstance(message, str):
         return f"{prefix}{message}"
@@ -2179,6 +2160,7 @@ os.environ["HERMES_QUIET"] = "1"  # gateway runs quiet: no debug output, cwd use
 # Terminal cwd: config.yaml terminal.cwd is canonical (bridged above); MESSAGING_CWD is legacy fallback.
 from gateway.cwd_placeholder import CWD_PLACEHOLDERS, resolve_placeholder_terminal_cwd
 
+from gateway import run_observed_context as group_observation
 from gateway.config import (
     ChannelOverride, Platform, GatewayConfig, PlatformConfig, _getenv, load_gateway_config)
 from gateway.session import (
@@ -3664,12 +3646,6 @@ class GatewayRunner(
     exit_reason = property(lambda self: self._exit_reason)
     exit_code = property(lambda self: self._exit_code)
 
-    def _resolve_session_isolation_for_source(
-        self, source: SessionSource
-    ) -> tuple[bool, bool]:
-        """Resolve the store's effective scope, with a bare-runner config fallback."""
-        return resolve_runner_session_isolation(self, source)
-
     def _session_key_for_source(self, source: SessionSource) -> str:
         """Resolve the current session key for a source, honoring gateway config when available."""
         if hasattr(self, "session_store") and self.session_store is not None:
@@ -3697,7 +3673,7 @@ class GatewayRunner(
                     _profile = get_active_profile_name() or "default"
                 except Exception:
                     _profile = None
-        group_per_user, thread_per_user = self._resolve_session_isolation_for_source(source)
+        group_per_user, thread_per_user = resolve_runner_session_isolation(self, source)
         return build_session_key(
             source,
             group_sessions_per_user=group_per_user,

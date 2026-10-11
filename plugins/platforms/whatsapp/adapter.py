@@ -1127,7 +1127,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             store.append_to_transcript(session_entry.session_id, entry)
         except Exception as exc:
             logger.warning(
-                "[%s] Failed to observe WhatsApp group message: %s", self.name, exc
+                "[%s] Failed to observe WhatsApp group message: %s", self.name, exc, exc_info=True
             )
 
 
