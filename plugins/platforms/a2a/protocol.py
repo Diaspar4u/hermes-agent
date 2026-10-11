@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
@@ -571,22 +572,22 @@ def persist_message_once(context_id: str, role: str, text: str, task_id: str) ->
     try:
         path = _conv_path(context_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with _conversation_lock:
-            with _conversation_file_lock(path):
-                if path.exists():
-                    with path.open("r", encoding="utf-8-sig") as handle:
-                        for line in handle:
-                            try:
-                                existing = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            if existing.get("role") == role and existing.get("task_id") == task_id:
-                                return False
-                with path.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps({"ts": time.time(), "role": role, "text": text,
-                                             "task_id": task_id}, ensure_ascii=False) + "\n")
+        with _conversation_lock, _conversation_file_lock(path):
+            if path.exists():
+                with path.open("r", encoding="utf-8-sig") as handle:
+                    for line in handle:
+                        try:
+                            existing = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if existing.get("role") == role and existing.get("task_id") == task_id:
+                            return False
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"ts": time.time(), "role": role, "text": text,
+                                         "task_id": task_id}, ensure_ascii=False) + "\n")
         return True
     except Exception:
+        logging.getLogger(__name__).exception("A2A task-result persistence failed")
         return False
 
 

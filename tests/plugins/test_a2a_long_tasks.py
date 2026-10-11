@@ -307,7 +307,6 @@ def test_losing_terminal_transition_has_no_completion_side_effects(monkeypatch) 
 
     def lose_transition(task_id: str, _state: str, _reply: str = ""):
         original_complete(task_id, protocol.STATE_FAILED, "[task already failed]")
-        return None
 
     monkeypatch.setattr(adapter.tasks, "complete", lose_transition)
     monkeypatch.setattr(
@@ -582,7 +581,7 @@ def test_terminal_poll_persists_once_across_processes(tmp_path) -> None:
     ]
 
 
-def test_repeated_terminal_task_render_is_stable() -> None:
+def test_repeated_terminal_task_render_is_stable(monkeypatch) -> None:
     store = protocol.TaskStore()
     store.create("task-stable", "ctx-stable", "finance")
     store.complete("task-stable", protocol.STATE_COMPLETED, "final result")
@@ -590,7 +589,7 @@ def test_repeated_terminal_task_render_is_stable() -> None:
     record = store.get("task-stable")
     assert record is not None
     first = store.to_task(record)
-    time.sleep(0.01)
+    monkeypatch.setattr(protocol, "now_iso", lambda: "2030-01-01T00:00:00.000Z")
     second = store.to_task(record)
 
     assert first["status"]["timestamp"] == second["status"]["timestamp"]
