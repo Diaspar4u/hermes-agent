@@ -7378,5 +7378,3 @@ def register(ctx) -> None:
         env_overrides=gateway_env.ENV_OVERRIDES,
         env_enable_credentials=gateway_env.ENV_ENABLE_CREDENTIALS, **gateway_env.AUTHZ,
     )
-    from .topic_tool import register_topic_tool
-    register_topic_tool(ctx)
