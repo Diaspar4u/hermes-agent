@@ -88,7 +88,7 @@ def _acp_stderr_print(*args, **kwargs) -> None:
     print(*args, **kwargs)
 
 
-def _normalize_acp_workspace_route(value: Any) -> Optional[Dict[str, Any]]:
+def _normalize_acp_workspace_route(value: Any) -> Optional[dict[str, Any]]:
     """Return a validated, persistence-safe ACP SSH workspace route."""
     if not isinstance(value, dict) or value.get("backend") != "ssh":
         return None
@@ -111,7 +111,7 @@ def _normalize_acp_workspace_route(value: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def _validated_acp_workspace_route(value: Any, *, source: str) -> Optional[Dict[str, Any]]:
+def _validated_acp_workspace_route(value: Any, *, source: str) -> Optional[dict[str, Any]]:
     """Return a valid route, or fail instead of silently executing on another backend."""
     if value is None or value == {}:
         return None
@@ -124,7 +124,7 @@ def _validated_acp_workspace_route(value: Any, *, source: str) -> Optional[Dict[
     return route
 
 
-def _configured_acp_workspace_route() -> Optional[Dict[str, Any]]:
+def _configured_acp_workspace_route() -> Optional[dict[str, Any]]:
     """Load the optional workspace route captured by newly created ACP sessions."""
     from hermes_cli.config import load_config_readonly
 
@@ -136,12 +136,12 @@ def _configured_acp_workspace_route() -> Optional[Dict[str, Any]]:
 
 
 def _register_task_cwd(
-    task_id: str, cwd: str, workspace_route: Optional[Dict[str, Any]] = None
+    task_id: str, cwd: str, workspace_route: Optional[dict[str, Any]] = None
 ) -> None:
     """Bind an ACP session to its editor cwd and optional SSH workspace."""
     if not task_id:
         return
-    overrides: Dict[str, Any] = {"cwd": _translate_acp_cwd(cwd)}
+    overrides: dict[str, Any] = {"cwd": _translate_acp_cwd(cwd)}
     route = _validated_acp_workspace_route(
         workspace_route, source="ACP session workspace route"
     )
@@ -455,7 +455,7 @@ class SessionManager:
 
         # Ensure model is a plain string (not a MagicMock or other proxy).
         model_str = str(state.model) if state.model else None
-        session_meta: Dict[str, Any] = {"cwd": state.cwd}
+        session_meta: dict[str, Any] = {"cwd": state.cwd}
         if state.workspace_route is not None:
             session_meta["workspace_route"] = state.workspace_route
         for key in ("provider", "base_url", "api_mode"):

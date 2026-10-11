@@ -555,7 +555,7 @@ def resolve_task_overrides(task_id: Optional[str]) -> dict[str, Any]:
 
 def resolve_task_config(
     task_id: Optional[str], *, host_local: bool = False
-) -> tuple[Dict[str, Any], Dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return profile config plus this task's backend route and its raw overrides."""
     overrides = {} if host_local else resolve_task_overrides(task_id)
     config = {**_get_env_config(), **overrides}
