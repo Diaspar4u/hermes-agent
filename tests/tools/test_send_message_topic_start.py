@@ -13,9 +13,10 @@ from plugins.platforms.telegram import topic_tool
 
 
 def test_topic_tool_is_registered_only_in_the_telegram_bundle():
-    ctx = SimpleNamespace(register_tool=MagicMock())
+    from plugins.platforms import telegram
 
-    topic_tool.register_topic_tool(ctx)
+    ctx = SimpleNamespace(register_tool=MagicMock(), register_platform=MagicMock())
+    telegram.register(ctx)
 
     ctx.register_tool.assert_called_once_with(
         name="telegram_topic_start",
@@ -46,7 +47,7 @@ def test_topic_start_creates_current_chat_topic_and_wakes_it(monkeypatch):
     }
 
     import gateway.run as gateway_run
-    import gateway.session_context as session_context
+    from gateway import session_context
 
     monkeypatch.setattr(gateway_run, "_gateway_runner_ref", lambda: runner)
     monkeypatch.setattr(session_context, "get_session_env", lambda key, default="": values.get(key, default))
@@ -135,7 +136,9 @@ async def test_topic_start_uses_normal_admission_and_respects_pause():
     assert event.allow_gateway_control is False
     assert "paused" in observed["reply"].lower()
     assert "maintenance" in observed["reply"]
-    persisted = runner._hmwa_user_transcript_entry(
+    from gateway.run_turn_persistence import GatewayTurnPersistenceMixin
+
+    persisted = GatewayTurnPersistenceMixin._hmwa_user_transcript_entry(
         event,
         SimpleNamespace(
             persist_user_message=event.text,
@@ -151,7 +154,7 @@ async def test_topic_start_uses_normal_admission_and_respects_pause():
 
 
 def test_topic_start_refuses_non_telegram_session(monkeypatch):
-    import gateway.session_context as session_context
+    from gateway import session_context
 
     monkeypatch.setattr(
         session_context,
@@ -169,3 +172,16 @@ def test_topic_start_refuses_non_telegram_session(monkeypatch):
         "success": False,
         "error": "telegram_topic_start is available only from a Telegram session",
     }
+
+def test_topic_start_logs_unexpected_gateway_failure(monkeypatch, caplog):
+    import gateway.run as gateway_run
+    from gateway import session_context
+
+    values = {"HERMES_SESSION_PLATFORM": "telegram", "HERMES_SESSION_CHAT_ID": "-100123"}
+    runner = SimpleNamespace(adapters={Platform.TELEGRAM: object()}, _gateway_loop=None)
+    monkeypatch.setattr(gateway_run, "_gateway_runner_ref", lambda: runner)
+    monkeypatch.setattr(session_context, "get_session_env", lambda key, default="": values.get(key, default))
+    result = json.loads(topic_tool.telegram_topic_start({"topic_name": "Research", "prompt": "Continue"}))
+    assert result["success"] is False
+    assert "gateway event loop is not available" in result["error"]
+    assert any(record.exc_info for record in caplog.records)
