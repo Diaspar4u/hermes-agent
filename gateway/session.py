@@ -693,8 +693,15 @@ def resolve_runner_session_isolation(
             if isinstance(resolved, tuple) and len(resolved) == 2:
                 return bool(resolved[0]), bool(resolved[1])
         except Exception:
-            pass
+            logger.debug("Session-store isolation lookup failed; using runner config", exc_info=True)
     return resolve_session_isolation(getattr(runner, "config", None), source)
+
+
+def is_runner_shared_multi_user_session(runner: Any, source: SessionSource) -> bool:
+    """Attribute shared ingress using the same effective isolation as session routing."""
+    group_per_user, thread_per_user = resolve_runner_session_isolation(runner, source)
+    return is_shared_multi_user_session(source, group_sessions_per_user=group_per_user,
+                                        thread_sessions_per_user=thread_per_user)
 
 
 def is_shared_multi_user_session(
