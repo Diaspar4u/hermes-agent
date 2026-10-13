@@ -99,8 +99,9 @@ def test_acp_workspace_route_is_captured_persisted_and_restored_fail_closed(
         db.close()
 
 
+@pytest.mark.parametrize("persistent_setting, expected_persistent", [(None, True), (False, False)])
 def test_delegated_acp_route_reaches_all_tools_and_sync_false_needs_no_scp(
-    monkeypatch,
+    monkeypatch, persistent_setting, expected_persistent,
 ):
     parent_id, child_id = "acp-parent", "delegated-child"
     base_config = {
@@ -112,6 +113,8 @@ def test_delegated_acp_route_reaches_all_tools_and_sync_false_needs_no_scp(
         "modal_image": "",
         "daytona_image": "",
     }
+    if persistent_setting is not None:
+        base_config["ssh_persistent"] = persistent_setting
     captures = {}
 
     class DummyEnv:
@@ -148,7 +151,7 @@ def test_delegated_acp_route_reaches_all_tools_and_sync_false_needs_no_scp(
             "user": "developer",
             "port": 2222,
             "key": "~/.ssh/workspace",
-            "persistent": False,
+            "persistent": expected_persistent,
             "sync": False,
         }
 
@@ -202,9 +205,11 @@ def test_delegated_acp_route_reaches_all_tools_and_sync_false_needs_no_scp(
     env = terminal_tool_backends._build_ssh_env(
         cwd="/workspace/project",
         timeout=180,
-        ssh_config={"host": "workspace.example", "user": "developer", "sync": False},
+        ssh_config={"host": "workspace.example", "user": "developer", "sync": False,
+                    "persistent": expected_persistent},
     )
     env._before_execute()
 
     assert sync_calls == {"dirs": 0, "manager": 0}
     assert env._sync_manager is None
+    assert env._persist_env is expected_persistent

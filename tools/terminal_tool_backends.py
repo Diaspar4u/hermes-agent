@@ -56,7 +56,7 @@ _BUILTIN_BACKENDS = "local, docker, singularity, modal, daytona, vercel_sandbox,
 # Config -> kwargs shapers, driven by (out_key, config_key, default) tables. The container table's
 # (key, default) literal is intentionally greppable; tools/terminal_tool.py keeps its own for the AST test.
 _SSH_KEYS = (("host", "ssh_host", ""), ("user", "ssh_user", ""), ("port", "ssh_port", 22),
-             ("key", "ssh_key", ""), ("persistent", "ssh_persistent", False),
+             ("key", "ssh_key", ""), ("persistent", "ssh_persistent", True),
              ("sync", "ssh_sync", True))
 _RESOURCE_KEYS = (("cpu", "container_cpu", 1), ("memory", "container_memory", 5120),
                   ("disk", "container_disk", 51200), ("persistent_filesystem", "container_persistent", True))
@@ -82,6 +82,11 @@ _DOCKER_KWARGS = (
 def _ssh_config_from_config(config: dict[str, Any]) -> dict:
     """``ssh_config`` for :func:`_create_environment` (shared with the lazy ``ensure_task_env``)."""
     return {out: config.get(key, default) for out, key, default in _SSH_KEYS}
+
+
+def _local_config_from_config(config: dict[str, Any]) -> dict:
+    """``local_config`` for :func:`_create_environment` (TERMINAL_LOCAL_PERSISTENT, default on)."""
+    return {"persistent": config.get("local_persistent", True)}
 
 
 def _container_config_from_config(config: dict[str, Any]) -> dict:
@@ -126,10 +131,10 @@ def _modal_unavailable_reason(modal_state: dict[str, Any]) -> tuple[str, str]:
             f"Modal backend selected but no direct Modal credentials/config {found}.")
 
 
-# --- Environment builders. Signature: (*, image, cwd, timeout, cc, task_id, ssh_config, host_cwd)
+# --- Environment builders. Signature: (*, image, cwd, timeout, cc, task_id, ssh_config, local_config, host_cwd)
 # (env_type is only forwarded to the plugin-registry fallback, not to the built-in builders.)
-def _build_local_env(*, cwd, timeout, **_):
-    return _LocalEnvironment(cwd=cwd, timeout=timeout)
+def _build_local_env(*, cwd, timeout, local_config=None, **_):
+    return _LocalEnvironment(cwd=cwd, timeout=timeout, persistent=(local_config or {}).get("persistent", True))
 
 
 def _build_docker_env(*, image, cwd, timeout, cc, task_id, host_cwd, **_):
@@ -207,7 +212,8 @@ def _build_ssh_env(*, cwd, timeout, ssh_config, probe_only=False, **_):
         raise ValueError("SSH environment requires ssh_host and ssh_user to be configured")
     return _SSHEnvironment(host=ssh_config["host"], user=ssh_config["user"], port=ssh_config.get("port", 22),
                            key_path=ssh_config.get("key", ""), sync_files=ssh_config.get("sync", True),
-                           cwd=cwd, timeout=timeout, probe_only=probe_only)
+                           cwd=cwd, timeout=timeout, probe_only=probe_only,
+                           persistent=ssh_config.get("persistent", True))
 
 
 def _build_plugin_env(*, env_type, image, cwd, timeout, cc, task_id, **_):
@@ -247,7 +253,7 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
     connection with no remote setup/sync (the prompt-time probe). Unknown types fall through to plugin backends."""
     builder = _ENV_BUILDERS.get(env_type)
     kwargs = dict(image=image, cwd=cwd, timeout=timeout, cc=container_config or {}, task_id=task_id,
-                  ssh_config=ssh_config, host_cwd=host_cwd, probe_only=probe_only)
+                  ssh_config=ssh_config, local_config=local_config, host_cwd=host_cwd, probe_only=probe_only)
     if builder is not None:
         env = builder(**kwargs)
     else:
