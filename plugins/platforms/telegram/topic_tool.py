@@ -57,6 +57,7 @@ async def _create_topic_and_start(
     prompt: str,
     user_id: str | None,
     profile: str | None,
+    origin: Any,
 ) -> dict[str, Any]:
     thread_id = await adapter.create_handoff_thread(chat_id, topic_name)
     if not thread_id:
@@ -65,11 +66,12 @@ async def _create_topic_and_start(
     from gateway.config import Platform
     from gateway.delivery import looks_like_telegram_private_chat_id
     from gateway.platforms.event import MessageEvent, MessageType
-    from gateway.session import SessionSource
+    from gateway.session_identity import replace_source
     from gateway.wake import admit_gateway_event
 
     is_private = looks_like_telegram_private_chat_id(chat_id)
-    source = SessionSource(
+    source = replace_source(
+        origin,
         platform=Platform.TELEGRAM,
         chat_id=str(chat_id),
         chat_name=topic_name,
@@ -77,6 +79,8 @@ async def _create_topic_and_start(
         user_id=str(chat_id) if is_private else (user_id or "system:kickoff"),
         thread_id=str(thread_id),
         profile=profile,
+        chat_topic=topic_name,
+        message_id=None,
     )
     event = MessageEvent(
         text=prompt,
@@ -117,9 +121,18 @@ def telegram_topic_start(args: dict[str, Any], **_kwargs: Any) -> str:
         runner = _gateway_runner_ref()
     except ImportError:
         runner = None
-    adapter = runner.adapters.get(Platform.TELEGRAM) if runner is not None else None
+    session_key = get_session_env("HERMES_SESSION_KEY", "").strip()
+    store = getattr(runner, "session_store", None)
+    if runner is None or store is None or not session_key:
+        return _error("The current Telegram session origin is not available")
+    with store._lock:
+        entry = store._entries.get(session_key)
+    origin = runner._restored_source(entry) if entry is not None else None
+    if origin is None or origin.platform != Platform.TELEGRAM or str(origin.chat_id) != chat_id:
+        return _error("The current Telegram session origin could not be resolved")
+    adapter = runner._delivery_adapter_for(origin)
     if adapter is None:
-        return _error("The live Telegram gateway adapter is not available")
+        return _error("The originating Telegram bot is not available")
 
     try:
         result = _run_on_gateway_loop(
@@ -129,7 +142,8 @@ def telegram_topic_start(args: dict[str, Any], **_kwargs: Any) -> str:
                 topic_name=topic_name,
                 prompt=prompt,
                 user_id=get_session_env("HERMES_SESSION_USER_ID", "").strip() or None,
-                profile=get_session_env("HERMES_SESSION_PROFILE", "").strip() or None,
+                profile=origin.profile,
+                origin=origin,
             ),
             getattr(runner, "_gateway_loop", None),
         )
