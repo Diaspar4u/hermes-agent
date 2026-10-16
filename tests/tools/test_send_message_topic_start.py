@@ -153,6 +153,23 @@ async def test_topic_start_uses_normal_admission_and_respects_pause():
 
 
 
+def test_delegated_provenance_survives_the_split_turn_paths():
+    from gateway.response_filters import (
+        delegated_continuation_notes, delegated_continuation_text, display_metadata_for_event,
+    )
+
+    event = SimpleNamespace(delegated_continuation=True, internal=False, metadata={})
+    notes = delegated_continuation_notes(event)
+    assert len(notes) == 1
+    assert "not typed directly by the user" in notes[0]
+    assert delegated_continuation_text(event, "continue") == f"{notes[0]}\n\ncontinue"
+    assert display_metadata_for_event(event) == {"input_origin": "agent_delegated_continuation"}
+    event.delegated_continuation = False
+    assert delegated_continuation_notes(event) == []
+    assert delegated_continuation_text(event, "human input") == "human input"
+    assert display_metadata_for_event(event) == {}
+
+
 def test_topic_start_refuses_non_telegram_session(monkeypatch):
     from gateway import session_context
 
