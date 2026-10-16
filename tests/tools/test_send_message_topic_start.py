@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gateway.config import Platform
+from gateway.session import SessionSource
 from plugins.platforms.telegram import topic_tool
 
 
@@ -38,9 +39,14 @@ def test_topic_start_creates_current_chat_topic_and_wakes_it(monkeypatch):
     loop_thread = threading.Thread(target=loop.run_forever)
     loop_thread.start()
     runner = SimpleNamespace(adapters={Platform.TELEGRAM: adapter}, _gateway_loop=loop)
+    origin = SessionSource(platform=Platform.TELEGRAM, chat_id="-100123", user_id="42", profile="dev")
+    runner.session_store = SimpleNamespace(_lock=threading.Lock(), _entries={"current": SimpleNamespace(origin=origin)})
+    runner._restored_source = lambda entry: entry.origin
+    runner._delivery_adapter_for = lambda source: adapter
     admit = AsyncMock()
     values = {
         "HERMES_SESSION_PLATFORM": "telegram",
+        "HERMES_SESSION_KEY": "current",
         "HERMES_SESSION_CHAT_ID": "-100123",
         "HERMES_SESSION_USER_ID": "42",
         "HERMES_SESSION_PROFILE": "dev",
@@ -124,6 +130,7 @@ async def test_topic_start_uses_normal_admission_and_respects_pause():
             prompt="Research the launch.",
             user_id="42",
             profile="dev",
+            origin=SessionSource(platform=Platform.TELEGRAM, chat_id="-100123", user_id="42", profile="dev"),
         )
     finally:
         estop.disengage()
@@ -194,8 +201,13 @@ def test_topic_start_logs_unexpected_gateway_failure(monkeypatch, caplog):
     import gateway.run as gateway_run
     from gateway import session_context
 
-    values = {"HERMES_SESSION_PLATFORM": "telegram", "HERMES_SESSION_CHAT_ID": "-100123"}
+    values = {"HERMES_SESSION_PLATFORM": "telegram", "HERMES_SESSION_CHAT_ID": "-100123",
+              "HERMES_SESSION_KEY": "current"}
     runner = SimpleNamespace(adapters={Platform.TELEGRAM: object()}, _gateway_loop=None)
+    origin = SessionSource(platform=Platform.TELEGRAM, chat_id="-100123")
+    runner.session_store = SimpleNamespace(_lock=threading.Lock(), _entries={"current": SimpleNamespace(origin=origin)})
+    runner._restored_source = lambda entry: entry.origin
+    runner._delivery_adapter_for = lambda source: runner.adapters[Platform.TELEGRAM]
     monkeypatch.setattr(gateway_run, "_gateway_runner_ref", lambda: runner)
     monkeypatch.setattr(session_context, "get_session_env", lambda key, default="": values.get(key, default))
     result = json.loads(topic_tool.telegram_topic_start({"topic_name": "Research", "prompt": "Continue"}))
