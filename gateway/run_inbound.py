@@ -1218,7 +1218,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayPluginInjectionMixin,
         """Handle an incoming message from any platform: auth → command check → running-agent
         interrupt → get/create session → build context → run agent → return response."""
         from gateway.run import _AGENT_PENDING_SENTINEL
-        _admitted = await self._hm_admit_event(event)
+        _admitted = await self._hm_admit_topic_event(event)
         if _admitted is None:
             return None
         event, source, is_internal = _admitted
@@ -1233,11 +1233,6 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayPluginInjectionMixin,
         # — Discord interaction passthrough builds its own MessageEvent and
         # calls handle_message directly, so a teardown on the relay's inbound
         # handler left those turns muted.
-
-        # Topic service updates carry user metadata, not agent input. Persist
-        # after authorization, then consume without starting an empty turn.
-        if await self._handle_telegram_forum_topic_name(event):
-            return None
 
         _paused_notice = self._hm_estop_gate(event, source, is_internal)
         if _paused_notice is not None:
