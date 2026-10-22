@@ -111,6 +111,10 @@ class MessageEvent:
     # ``message_id`` with new text, so native admission keys it apart from the original send.
     # Appended for positional compat (see the field-order rule above).
     edit_revision: Optional[str] = None
+    # Model-authored text dispatched by a tool from an already authorized user turn. It remains
+    # external for auth, bot-loop, ignored-channel, and emergency-stop admission; the marker keeps
+    # its distinct provenance through queued-event copies and transcript persistence.
+    delegated_continuation: bool = False
 
     # Process-local admission receipt, never routing metadata or execution acknowledgement.
     _gateway_accepted: bool = field(default=False, init=False, repr=False, compare=False)
