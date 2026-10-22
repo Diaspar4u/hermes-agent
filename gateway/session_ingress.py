@@ -111,6 +111,9 @@ async def _hand_over_turn_marker(authority, admission_id, event):
     adopter = _marker_adopters(authority).get(admission_id)
     if adopter is not None:
         _move_marker(event, adopter)
+        # Completion hooks receive the original event, not the reconstructed execution event.
+        if hasattr(event, '_streamed_final_response'):
+            adopter._streamed_final_response = event._streamed_final_response
         return
     if admission_id in authority.pending_deliveries:
         # Released by ``deliver_settled``, also when settlement failed and dropped the delivery.
