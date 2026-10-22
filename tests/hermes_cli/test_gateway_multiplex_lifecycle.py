@@ -34,15 +34,44 @@ def test_parked_is_not_served_but_remains_installed(homes, include_parked):
 
 
 @pytest.mark.parametrize('multiplex', [False, True])
-def test_default_marker_is_ignored_with_one_warning(homes, caplog, multiplex):
+def test_default_marker_excludes_it_from_multiplex_serving(homes, multiplex):
     from hermes_cli.profiles import profiles_to_serve
     root, _ = homes
     (root / 'gateway.parked').touch()
-    for _ in range(2):
-        assert 'default' in dict(profiles_to_serve(multiplex))
-    warnings = [r for r in caplog.records if 'gateway.parked' in r.message]
-    assert len(warnings) == 1
-    assert warnings[0].levelname == 'WARNING'
+    assert ('default' in dict(profiles_to_serve(multiplex))) is (not multiplex)
+    assert 'default' in dict(profiles_to_serve(multiplex, include_parked=True))
+
+
+def test_default_stop_parks_only_default_under_named_host(homes, monkeypatch, capsys):
+    from hermes_cli import gateway as gw, profiles
+    from hermes_cli.gateway_profile_lifecycle import print_parked_status
+    from gateway import control_socket
+    from gateway.run import _cron_tick_profile_homes
+    from gateway.config import GatewayConfig
+
+    root, worker = homes
+    owner = SimpleNamespace(home=worker, profile_label='worker', profiles=('worker', 'default'))
+    monkeypatch.setattr(gw, '_current_profile_name', lambda: 'default')
+    monkeypatch.setattr(gw, '_refuse_from_inside_gateway', lambda *a: None)
+    monkeypatch.setattr(gw, 'find_gateway_pids', lambda **kw: [])
+    monkeypatch.setattr(gw, '_served_by_another_host_gateway', lambda *a: owner)
+    calls = []
+
+    def unserve(home, name):
+        assert home == worker and name == 'default'
+        assert profiles.profile_is_parked(root)
+        calls.append(name)
+        return {'unserved': name, 'served_profiles': ['worker']}
+
+    monkeypatch.setattr(control_socket, 'request_unserve_profile', unserve)
+    gw._cmd_stop(SimpleNamespace())
+    assert calls == ['default']
+    assert print_parked_status()
+    assert "Profile 'default': parked" in capsys.readouterr().out
+    monkeypatch.setenv('HERMES_HOME', str(worker))
+    monkeypatch.setattr(profiles, 'get_active_profile_name', lambda: 'worker')
+    assert dict(profiles.profiles_to_serve(True)) == {'worker': worker}
+    assert dict(_cron_tick_profile_homes(GatewayConfig(multiplex_profiles=True))) == {'worker': worker}
 
 
 @pytest.mark.parametrize('verb', ['stop', 'start', 'restart'])

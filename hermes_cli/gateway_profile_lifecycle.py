@@ -1,4 +1,4 @@
-"""Named-profile lifecycle inside the host gateway, never a service-manager action."""
+"""Served-profile lifecycle inside the host gateway, never a service-manager action."""
 from __future__ import annotations
 
 import logging
@@ -45,12 +45,12 @@ def host_scope_for_all_verb(owner):
 
 
 def profile_lifecycle(command: str, args) -> bool:
-    """True when a named-profile command was handled (including an unconfirmed request)."""
+    """True when a served-profile command was handled (including an unconfirmed request)."""
     from hermes_cli import gateway as gw
     from gateway.control_socket import request_unserve_profile, request_serve_profile_hot
 
     name = gw._current_profile_name()
-    if not name or name == "default" or getattr(args, "all", False) or getattr(args, "force", False):
+    if not name or getattr(args, "all", False) or getattr(args, "force", False):
         return False
     home = get_hermes_home()
     if profile_is_standalone(home):
@@ -120,7 +120,7 @@ def print_parked_status() -> bool:
     """A parked satellite is still installed, but is not a running gateway."""
     from hermes_cli import gateway as gw
     name = gw._current_profile_name()
-    if name and name != "default" and profile_is_parked(get_hermes_home()):
+    if name and profile_is_parked(get_hermes_home()):
         print(f"Profile '{name}': parked (hermes -p {name} gateway start)")
         return True
     if not name or name == "default":
