@@ -162,7 +162,7 @@ def test_mention_stripping_removes_bot_phone_from_body():
 
 
 def test_observe_mode_requires_native_mention_but_preserves_free_response_and_cloud():
-    from gateway.platforms.whatsapp_cloud import WhatsAppCloudAdapter
+    from plugins.platforms.whatsapp_cloud.adapter import WhatsAppCloudAdapter
 
     adapter = _make_adapter(
         require_mention=True,
