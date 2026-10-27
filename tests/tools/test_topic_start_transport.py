@@ -45,7 +45,7 @@ def test_topic_kickoff_preserves_origin_transport(mux, monkeypatch, receiver, ch
         bot.handle_message = accept
     if offline:
         runner._profile_adapters["team_b"] = {}
-        runner._profile_failed_platforms = {"team_b": {source.platform: {}}}
+        runner._profile_bot_platforms = {"team_b": {source.platform}}
         runner.session_store._entries["current"].origin = replace(source)
     values = {
         "HERMES_SESSION_PLATFORM": "telegram", "HERMES_SESSION_KEY": "current",
