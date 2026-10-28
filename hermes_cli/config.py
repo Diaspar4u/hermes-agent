@@ -1056,7 +1056,7 @@ def validate_config_structure(config: Optional[dict[str, Any]] = None) -> list[C
         except Exception as exc:
             from hermes_cli.config_home import config_load_issue
             return [config_load_issue(exc)]
-
+    from hermes_cli.config_acp import validate_acp_workspace
     from hermes_cli.config_value_checks import (
         _validate_quoted_containers, _validate_timezone, _validate_voice, _validate_web_backends)
     issues: list[ConfigIssue] = []
@@ -1064,7 +1064,7 @@ def validate_config_structure(config: Optional[dict[str, Any]] = None) -> list[C
     _validate_timezone(config, issues)
     cp = config.get("custom_providers")
     fb = config.get("fallback_model")
-    for value, validator in ((cp, _validate_custom_providers), (fb, _validate_fallback_model)):
+    for value, validator in ((cp, _validate_custom_providers), (fb, _validate_fallback_model), (config, validate_acp_workspace)):
         if value is not None:
             validator(value, issues)
 
