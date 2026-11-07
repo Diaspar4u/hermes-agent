@@ -265,6 +265,33 @@ class TestBuildSkillsSystemPrompt:
 
 
 
+    def test_guidance_preserves_authority_and_procedural_learning(self, monkeypatch, tmp_path):
+        from agent.prompt_builder import (
+            OPENAI_MODEL_EXECUTION_GUIDANCE,
+            TASK_COMPLETION_GUIDANCE,
+            TOOL_USE_ENFORCEMENT_GUIDANCE,
+        )
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        skill_dir = tmp_path / "skills" / "tools" / "workflow"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: workflow\ndescription: A reusable workflow\n---\nWorkflow steps.\n"
+        )
+        prompt = build_skills_system_prompt()
+
+        assert "authorized execution requests" in TOOL_USE_ENFORCEMENT_GUIDANCE
+        assert "read-only investigation" in TOOL_USE_ENFORCEMENT_GUIDANCE
+        assert "scope, architecture, authorization, target, or side effects" in OPENAI_MODEL_EXECUTION_GUIDANCE
+        assert "what tool you would call" not in OPENAI_MODEL_EXECUTION_GUIDANCE
+        assert "Plans, todos, and procedures do not create requirements or authority" in OPENAI_MODEL_EXECUTION_GUIDANCE
+        assert "try an alternative within the authorized scope" in TASK_COMPLETION_GUIDANCE
+        assert "NEVER substitute plausible-looking fabricated" in TASK_COMPLETION_GUIDANCE
+        assert "only within the current task and authorization" in prompt
+        assert "current request or established learning/write authority" in prompt
+        assert "useful procedural improvements" in prompt
+        assert "even partially relevant" in prompt
+
     def test_deduplicates_skills(self, monkeypatch, tmp_path):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         cat_dir = tmp_path / "skills" / "tools"
