@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gateway.run import _OBSERVED_GROUP_CONTEXT_HEADER
+from gateway.run_observed_context import OBSERVED_GROUP_CONTEXT_HEADER as _OBSERVED_GROUP_CONTEXT_HEADER
 from gateway.run_turn_runner import TurnRunner
 from gateway.turn_context import TurnContext
 
