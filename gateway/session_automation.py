@@ -107,7 +107,8 @@ async def _admit_folded_completion(authority, adapter, event, evt, identity):
     this completion queues alone."""
     import asyncio
     waiting = await asyncio.to_thread(_waiting_completion, authority, evt, event)
-    if waiting is not None:
+    # Exact retries keep their original payload for native admission deduplication.
+    if waiting is not None and waiting['request_id'] != identity:
         unfolded = event.text, dict(event.metadata)
         _fold_completion(event, waiting, identity)
         try:
