@@ -1366,6 +1366,15 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
         from tools.environments.local import host_gateway_child_env, served_profile_child_env
 
         home = get_hermes_home()
+        from hermes_constants import get_routing_process_hermes_home
+        from hermes_cli.gateway_multiplex_mode import explicit_multiplex_flag
+        launch_home = get_routing_process_hermes_home()
+        if launch_home != get_default_hermes_root() and explicit_multiplex_flag(launch_home):
+            watcher_env = drop_bridged_env(served_profile_child_env(
+                target_home=launch_home, inherit_credentials=True,
+            ))
+            watcher_env.pop("_HERMES_GATEWAY", None)
+            return watcher_env
         try:
             on_default = home.resolve() == get_default_hermes_root().resolve()
         except Exception:

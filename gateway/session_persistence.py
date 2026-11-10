@@ -201,14 +201,22 @@ class SessionPersistenceMixin:
             return pinned
         profile = self._named_profile_for_key(session_key)
         if profile is None:
-            # Default-profile (``agent:main``) rows belong to the launch home, not to whichever
-            # profile's scope happens to be active: a scoped drain tick or cron mirror touching a
-            # default chat used to write its rows into the secondary's store (#102157's picture).
+            # Default-profile rows belong to the root even when a named profile hosts the gateway.
+            # Historical standalone routes in that host's index still belong to the named host;
+            # require its persisted session owner before retaining that legacy location.
             routing_home = getattr(self, "_routing_home", None)
             if routing_home is None or not getattr(self.config, "multiplex_profiles", False):
                 return self._db
             try:
-                return self._open_session_db_for_active_scope(db_path=routing_home / "state.db")
+                from hermes_constants import get_default_hermes_root, profile_name_for_home
+                home = get_default_hermes_root()
+                entry = self._entries.get(session_key)
+                if entry is not None and routing_home != home:
+                    db = self._routing_db
+                    row = db.get_session(entry.session_id) if db is not None else None
+                    if row and row.get("profile_name") == profile_name_for_home(routing_home):
+                        home = routing_home
+                return self._open_session_db_for_active_scope(db_path=home / "state.db")
             except Exception:
                 return None
         home = self._profile_home_for_key(session_key)

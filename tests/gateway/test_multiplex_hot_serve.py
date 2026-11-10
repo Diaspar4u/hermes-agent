@@ -275,6 +275,39 @@ async def test_profile_lifecycle_over_real_control_socket(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_parking_default_preserves_named_host_database(tmp_path, monkeypatch):
+    from hermes_state_registry import acquire, release
+    from gateway.run_profile_reconcile import unserve_profile_verb, serve_profile_verb
+
+    runner, home = _runner(tmp_path, monkeypatch)
+    worker = _mkprofile(home, "worker")
+    monkeypatch.setenv("HERMES_HOME", str(worker))
+    runner._primary_profile_name = "worker"
+    with patch("hermes_cli.profiles.get_active_profile_name", return_value="worker"):
+        await runner._start_secondary_profile_adapters()
+        default_db = acquire(home / "state.db")
+        worker_db = acquire(worker / "state.db")
+        worker_db.create_session("still-live", "local", profile_name="worker")
+        worker_connection = worker_db._conn
+        try:
+            (home / "gateway.parked").touch()
+            stop = unserve_profile_verb(runner)
+            answer = await asyncio.to_thread(stop, {"name": "default"})
+            assert answer["unserved"] == "default"
+            assert answer["served_profiles"] == ["worker"]
+            assert default_db._conn is None
+            assert worker_connection.execute("SELECT id FROM sessions WHERE id='still-live'").fetchone()[0] == "still-live"
+            assert worker_db.get_session("still-live")["profile_name"] == "worker"
+            start = serve_profile_verb(runner)
+            refused = await asyncio.to_thread(start, {"name": "default"})
+            assert "parked" in refused["error"]
+            assert (await runner.reconcile_served_profiles())["served_profiles"] == ["worker"]
+        finally:
+            release(default_db)
+            release(worker_db)
+
+
+@pytest.mark.asyncio
 async def test_created_then_credentialed_profile_is_served_without_restart(tmp_path, monkeypatch):
     runner, home = _runner(tmp_path, monkeypatch)
     alpha_dir = _mkprofile(home, "alpha", "DISCORD_BOT_TOKEN=alpha-token\n")

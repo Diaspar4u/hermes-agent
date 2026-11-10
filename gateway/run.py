@@ -1847,8 +1847,7 @@ def load_gateway_config_for_runner() -> "GatewayConfig":
     """Load gateway config for the process-level GatewayRunner. An UNSET ``multiplex_profiles`` is
     settled first by ``resolve_multiplex_mode`` (the default is on; the boot guard keeps a fleet that
     still runs per-profile gateways standalone). Multiplexed: set multiplex-active, then reload
-    under the default root's ``_profile_runtime_scope`` — not ``get_hermes_home()``, which is the
-    named launcher when a profile-scoped process started the host. A scope miss must not fall
+    under the launch home's ``_profile_runtime_scope``. A scope miss must not fall
     through to that process's ``os.environ``. Off -> identical to ``load_gateway_config()``.
 
     See #64674.
@@ -1856,8 +1855,7 @@ def load_gateway_config_for_runner() -> "GatewayConfig":
     The probe load above only decides whether this process is a multiplexer. The primary
     config is the scoped reload: multiplex must already be active (a scope miss must not
     fall through to the launching profile's ``os.environ``) and the home must be the
-    default root, not ``get_hermes_home()`` — a named launcher's home is not the owner
-    of the primary adapter map.
+    launch home: an explicitly configured named host owns the primary adapter map.
     """
     from hermes_cli.gateway_multiplex_mode import log_multiplex_decision, resolve_multiplex_mode
     cfg = load_gateway_config()
@@ -1870,15 +1868,15 @@ def load_gateway_config_for_runner() -> "GatewayConfig":
     except Exception:
         logger.debug("could not set multiplex-active before primary config load", exc_info=True)
     try:
-        from hermes_constants import get_default_hermes_root
-        home = get_default_hermes_root()
+        from hermes_constants import get_routing_process_hermes_home
+        home = get_routing_process_hermes_home()
     except Exception:
         return cfg
     try:
         with _profile_runtime_scope(Path(home)):
             scoped = load_gateway_config()
     except Exception:
-        logger.debug("multiplex default-scope config reload failed; using unscoped load", exc_info=True)
+        logger.debug("multiplex launch-scope config reload failed; using unscoped load", exc_info=True)
         return cfg
     scoped.multiplex_profiles = cfg.multiplex_profiles  # the verdict above, not a second unset flag
     return scoped

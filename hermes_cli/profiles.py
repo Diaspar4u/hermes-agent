@@ -1130,9 +1130,6 @@ def profile_is_parked(home: Path) -> bool:
     return parked_marker_path(home).exists()
 
 
-_parked_default_warned: set[Path] = set()
-
-
 def profiles_to_serve(multiplex: bool, *, include_standalone: bool = False,
                       include_parked: bool = False) -> list[tuple[str, Path]]:
     """``(profile_name, hermes_home)`` pairs a gateway should serve — the single chokepoint
@@ -1149,12 +1146,10 @@ def profiles_to_serve(multiplex: bool, *, include_standalone: bool = False,
     ``include_standalone=True, include_parked=True``; serving/ticking callers pass neither."""
     active = get_active_profile_name() or "default"
     default = _get_default_hermes_home()
-    if profile_is_parked(default) and default not in _parked_default_warned:
-        logger.warning("Ignoring gateway.parked for the default profile; stop the host gateway instead")
-        _parked_default_warned.add(default)
     if not multiplex:
         return [(active, get_profile_dir(active))]
-    serve: list[tuple[str, Path]] = [("default", default)]
+    serve: list[tuple[str, Path]] = (
+        [("default", default)] if include_parked or not profile_is_parked(default) else [])
     serve.extend((entry.name, entry) for entry in _iter_named_profile_dirs()
                  if (include_standalone or not profile_is_standalone(entry))
                  and (include_parked or not profile_is_parked(entry)))

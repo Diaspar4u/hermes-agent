@@ -1463,7 +1463,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     def _expected_api_key(self) -> str:
         """Return the API key authorized for the URL-selected profile."""
         profile = _api_request_profile.get()
-        if not profile or profile == "default":
+        if not profile or profile == getattr(self.gateway_runner, "_primary_profile_name", "default"):
             return self._api_key
         try:
             from agent.secret_scope import get_secret
@@ -1491,7 +1491,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         profile = _api_request_profile.get()
         expected_key = self._expected_api_key()
         if not expected_key:
-            if not (profile and profile != "default"):
+            if not profile or profile == getattr(self.gateway_runner, "_primary_profile_name", "default"):
                 return None
             logger.warning(
                 "API server rejected request for profile %r: no profile-scoped "

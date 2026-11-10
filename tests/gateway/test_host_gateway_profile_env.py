@@ -1,10 +1,9 @@
-"""A host gateway spawned from a profile-scoped process must not adopt that profile.
+"""An explicit named host keeps ownership; implicit host spawns still target default.
 
 Two disposable homes: the default root (the multiplexer) and a named profile whose
 ``.env`` holds the only Telegram token. The process environment is that profile's
-— the shape a desktop / update spawn inherits. The host's primary adapter claim
-must stay the default profile's, the named launcher must start as a secondary,
-and a duplicate refusal must say which claim came from the environment.
+— the shape a desktop / update spawn inherits. An explicit host keeps its own
+primary claim; a duplicate refusal identifies claims inherited from the environment.
 """
 from __future__ import annotations
 
@@ -52,8 +51,8 @@ def _inherit_worker_env(monkeypatch, worker_home: Path) -> None:
 
 
 class TestProfileEnvIsNotThePrimaryClaim:
-    def test_worker_env_does_not_become_the_host_primary_token(self, tmp_path, monkeypatch):
-        """Profile env inherited by the host process must not seed the primary adapter."""
+    def test_explicit_named_host_uses_its_own_primary_token(self, tmp_path, monkeypatch):
+        """An explicit named host reloads its own credentials through the profile scope."""
         from gateway import run as run_mod
 
         default_home, worker_home = _two_homes(tmp_path)
@@ -64,11 +63,8 @@ class TestProfileEnvIsNotThePrimaryClaim:
         assert cfg.multiplex_profiles is True
         telegram = cfg.platforms.get(Platform.TELEGRAM)
         token = "" if telegram is None else (telegram.token or "")
-        assert token != _WORKER_TOKEN, (
-            "host primary claimed the launching profile's TELEGRAM_BOT_TOKEN"
-        )
-        # The reload that produced the primary config ran under the default root,
-        # not the named launcher's home.
+        assert token == _WORKER_TOKEN
+        # The named host and dormant default remain distinct homes.
         assert Path(default_home).resolve() != Path(worker_home).resolve()
 
     @pytest.mark.asyncio
@@ -136,17 +132,17 @@ class TestHostGatewaySpawnEnv:
         assert env.get("HERMES_HOME") == str(worker_home)
         assert env.get("TELEGRAM_BOT_TOKEN") == _WORKER_TOKEN
 
-    def test_restart_watcher_does_not_inherit_profile_token(self, tmp_path, monkeypatch):
-        """The detached restart child is built with served_profile_child_env, not os.environ.copy()."""
+    def test_restart_watcher_preserves_explicit_named_owner(self, tmp_path, monkeypatch):
+        """The explicit host keeps its home and rebuilds that profile's child credentials."""
         from gateway.run_shutdown import GatewayShutdownMixin
 
-        default_home, worker_home = _two_homes(tmp_path)
+        _default_home, worker_home = _two_homes(tmp_path)
         _inherit_worker_env(monkeypatch, worker_home)
 
         env = GatewayShutdownMixin._restart_watcher_env()
 
-        assert env.get("HERMES_HOME") == str(default_home)
-        assert env.get("TELEGRAM_BOT_TOKEN") != _WORKER_TOKEN
+        assert env.get("HERMES_HOME") == str(worker_home)
+        assert env.get("TELEGRAM_BOT_TOKEN") == _WORKER_TOKEN
 
 
 class TestSettledHostRecordDecidesRestart:

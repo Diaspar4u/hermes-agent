@@ -141,13 +141,10 @@ class GatewayRuntimeInitMixin:
         self._agent_cache_lock = threading.Lock()
         # Launch-time identity of the profile that owns ``self.adapters``; ``_authorization_adapter``
         # compares against this rather than the per-turn ``_active_profile_name()``. A multiplex
-        # host's primary map is always the default profile, even when a named profile launched
-        # the process (that launcher is a secondary adapter owner).
+        # host's primary map belongs to the launch profile, including an explicitly named host.
         launch = self._active_profile_name()
         self._kanban_notifier_profile = launch
-        self._primary_profile_name = (
-            "default" if getattr(self.config, "multiplex_profiles", False) else launch
-        )
+        self._primary_profile_name = launch
         # Teams meeting pipeline runtime (bound later when msgraph_webhook adapter exists).
         self._teams_pipeline_runtime = None
         self._teams_pipeline_runtime_error: Optional[str] = None

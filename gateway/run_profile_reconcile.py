@@ -508,10 +508,12 @@ class GatewayProfileReconcileMixin:
             try:
                 with _log_suppressed(logging.DEBUG, "profile handle release failed", exc_info=True):
                     from hermes_state_registry import close_all_under
-                    close_all_under(home)
+                    # The default home contains every named profile: close only its own store.
+                    close_all_under(home / "state.db" if name == "default" else home)
                 with _log_suppressed(logging.DEBUG, "memory-store release failed", exc_info=True):
                     from plugins.memory import import_provider_module  # catalog plugin since it left core
-                    import_provider_module("holographic", "store").MemoryStore.release_all_under(home)
+                    if name != "default":
+                        import_provider_module("holographic", "store").MemoryStore.release_all_under(home)
                 # The gateway process is a second holder the CLI-side delete cannot reach: its routed
                 # log files (logs/.__agent.lock, logs/.__errors.lock) and its scoped MCP servers'
                 # mcp-stderr.log handle live HERE, so unserve must release them in this process too
@@ -556,7 +558,7 @@ def _profile_lifecycle_verb(runner, *, serve: bool):
             installed = dict(profiles_to_serve(True, include_parked=True))
             if name not in installed:
                 return {"error": f"unknown profile '{name}'"}
-            if name != "default" and profile_is_parked(installed[name]):
+            if profile_is_parked(installed[name]):
                 return {"error": f"profile '{name}' is parked (gateway.parked)"}
             if name in known:
                 return {"error": f"profile '{name}' is already served"}

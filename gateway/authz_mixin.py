@@ -219,7 +219,7 @@ class GatewayAuthorizationMixin:
         secondary whose adapter failed to connect must NOT fall back to the default profile's adapter
         (replies, tool sends, marker-file notices out the wrong bot)."""
         profile_name = (profile or "").strip() or None
-        if not profile_name or profile_name == "default":
+        if not profile_name:
             return self._primary_adapters()
         profile_adapters = self._profile_adapters_map()
         if profile_name in profile_adapters:
