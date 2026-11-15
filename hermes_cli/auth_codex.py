@@ -828,25 +828,18 @@ def _refresh_expired_codex_probe_token(
 
 def _probe_codex_pool_entry_quota_restored(entry: dict[str, Any]) -> Optional[bool]:
     """``_probe_codex_quota_restored`` for a persisted pool entry, refreshing an expired token first."""
-    from hermes_cli.auth import _auth_store_lock, _load_auth_store, _save_auth_store
-    token = _stripped(entry.get("access_token"))
-    fresh = _refresh_expired_codex_probe_token(token, entry.get("refresh_token"))
-    if fresh:
-        token = fresh["access_token"]
-        try:
-            with _auth_store_lock():
-                auth_store = _load_auth_store()
-                for disk_entry in _codex_pool_dicts(_pool_entries(auth_store, "openai-codex")):
-                    if disk_entry.get("id") == entry.get("id"):
-                        disk_entry.update(fresh)
-                        _save_auth_store(auth_store)
-                        break
-        except Exception:
-            logger.debug("Failed to persist refreshed Codex pool tokens", exc_info=True)
-    if not token:
+    from agent.credential_pool import load_pool
+    from agent.credential_pool_refresh import refresh_codex_pool_entry
+
+    pool = load_pool("openai-codex")
+    current = next((row for row in pool.entries() if row.id == entry.get("id")), None)
+    if current is None:
+        return None
+    current = refresh_codex_pool_entry(pool, current, force=False, failed_key=None, quota_probe=True)
+    if current is None or not current.access_token:
         return None
     # The row keeps the canonical URL; a gateway key belongs to its route host (#121486).
-    return _probe_codex_quota_restored(token, base_url=_codex_pool_route_base_url(entry.get("base_url")))
+    return _probe_codex_quota_restored(current.access_token, base_url=_codex_pool_route_base_url(current.base_url))
 
 
 def clear_codex_pool_quota_cooldowns(access_token: Optional[str] = None) -> int:
