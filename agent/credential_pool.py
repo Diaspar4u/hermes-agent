@@ -5,6 +5,7 @@ from __future__ import annotations
 from agent.credential_pool_admin import CredentialPoolAdminMixin
 from agent.credential_pool_model_cooldowns import CredentialPoolModelCooldownMixin, model_cooldown_until
 from agent.credential_pool_timestamps import _parse_absolute_timestamp
+from agent.credential_pool_refresh import refresh_codex_pool_entry, sync_codex_pool_entry
 
 import logging
 import os
@@ -896,6 +897,8 @@ def persist_pool_entries(
                     status_cleared_ids=status_cleared_ids, token_bases=token_bases,
                 )
             except Exception as exc:
+                if provider == "openai-codex":
+                    raise
                 # Fail closed on the FORK, not on the save: never fall back to
                 # writing a local copy (that IS the bug). The in-memory pool
                 # still holds the rotated pair for this process.
@@ -1254,7 +1257,7 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
         return entry
 
     def _sync_entry_from_pool_store(self, entry: PooledCredential) -> PooledCredential:
-        """Adopt a token pair rotated by another pool instance (anthropic, xai-oauth).
+        """Adopt a token pair rotated by another pool instance (Anthropic, Codex, xAI).
 
         Re-reads the exact persisted row from the credential-pool store while
         the shared cross-process auth-store lock is held. Direct integrations
@@ -1268,6 +1271,8 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
         the pool store, is token authority for those sources; a row with no
         token material at all is refused for the same reason.
         """
+        if self.provider == "openai-codex":
+            return sync_codex_pool_entry(self, entry)
         if self.provider not in ("anthropic", "xai-oauth") and plugin_refresh_hook(self.provider) is None:
             return entry
         is_anthropic = self.provider == "anthropic"
@@ -1492,6 +1497,8 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
             if force:
                 self._mark_exhausted(entry, None)
             return None
+        if self.provider == "openai-codex":
+            return refresh_codex_pool_entry(self, entry, force=force, failed_key=failed_key)
         # Plugin providers with a ``refresh_credential`` hook are treated as single-use by default:
         # the pool cannot know their grant semantics, and a needless in-lock re-read is cheaper than
         # a ``refresh_token_reused`` login loss. Eligibility comes from the hook, never a name set.
@@ -1506,11 +1513,6 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
         # cross-process auth-store flock; a waiter's in-lock re-sync picks up
         # the winner's rotated token and skips the POST.
         with _auth_store_lock(timeout_seconds=self._single_use_refresh_lock_timeout()):
-            if self.provider == "openai-codex":
-                synced = self._sync_entry_from_auth_store(entry)
-                if synced is not entry and not force and not self._entry_needs_refresh(synced):
-                    return synced
-                return self._refresh_entry_impl(synced, force=force)
             synced = self._sync_entry_from_pool_store(entry)
             if self.provider == "anthropic" and synced.source == "claude_code":
                 # claude_code entries are NOT profile-owned: the refresh token
@@ -1683,7 +1685,8 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
             if self.provider == "anthropic":
                 updated = self._refresh_anthropic(entry)
             elif self.provider in _TOKENS_SINGLETON_PROVIDERS:
-                entry = self._sync_entry_from_auth_store(entry)
+                if self.provider != "openai-codex":
+                    entry = self._sync_entry_from_auth_store(entry)
                 updated = self._post_tokens_refresh(entry)
             elif (plugin_refresh := plugin_refresh_hook(self.provider)) is not None:
                 rotated = plugin_refresh(entry)
@@ -1780,7 +1783,7 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
                 return None
         elif self.provider in _TOKENS_SINGLETON_PROVIDERS:
             _, display, _, terminal_fn_name = _TOKENS_SINGLETON_PROVIDERS[self.provider]
-            synced = self._sync_entry_from_auth_store(entry)
+            synced = self._sync_entry_from_auth_store(self._sync_entry_from_pool_store(entry))
             if synced.refresh_token != entry.refresh_token:
                 logger.debug("%s OAuth refresh failed but auth.json has newer tokens — adopting", display)
                 return self._adopt(synced, **_MARK_OK)
@@ -1794,8 +1797,9 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
                 logger.warning(
                     "%s OAuth refresh token is terminally invalid (%s); clearing local token state. "
                     "Re-run 'hermes auth add %s' to sign in again.", display, exc, self.provider)
-                self._clear_terminal_tokens_state(entry, exc)
-                self._quarantine_sources(entry, {"device_code"})
+                if self.provider != "openai-codex" or entry.source == "device_code":
+                    self._clear_terminal_tokens_state(entry, exc)
+                    self._quarantine_sources(entry, {"device_code"})
                 self._mark_dead_refresh_grant(entry, exc)
                 return None
         elif self.provider == "nous":
@@ -1920,18 +1924,11 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
         try:
             # An exhausted entry is skipped by the refresh chain, so its stored token is usually
             # expired by probe time (401 -> None -> cooldown kept, #89415): refresh it first.
-            fresh = auth_mod._refresh_expired_codex_probe_token(token, entry.refresh_token)
-            if fresh:
-                # Persist the rotated pair on both sides the way ``_refresh_entry`` does:
-                # ``last_refresh`` plus the singleton write-back, or the next selection's
-                # auth-store sync re-adopts the consumed pair from ``providers.openai-codex``
-                # and clears the cooldown with it.
-                entry = self._adopt(
-                    entry, access_token=fresh["access_token"], refresh_token=fresh["refresh_token"],
-                    last_refresh=fresh.get("last_refresh") or entry.last_refresh,
-                )
-                self._sync_device_code_entry_to_auth_store(entry)
-                token = entry.access_token or token
+            refreshed = refresh_codex_pool_entry(self, entry, force=False, failed_key=None, quota_probe=True)
+            if refreshed is None:
+                return False
+            entry = refreshed
+            token = entry.access_token or token
             # The row keeps the canonical URL; a gateway key belongs to its route host (#121486).
             from hermes_cli.auth_codex import _codex_pool_route_base_url
             return bool(auth_mod._probe_codex_quota_restored(
@@ -2016,6 +2013,8 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
         """
         if entry.last_status not in {STATUS_EXHAUSTED, STATUS_DEAD}:
             return entry
+        if self.provider == "openai-codex":
+            entry = self._sync_entry_from_pool_store(entry)
         cleared_at = self._reset_cleared_after(entry)
         if cleared_at is not None:
             return self._adopt(entry, persist=False, **_MARK_OK, status_cleared_at=cleared_at)
